@@ -230,14 +230,8 @@ async def generate_outline_stream(request: OutlineRequest, use_qwen: bool = True
                 result_text = ""  # 收集完整输出
 
                 async for chunk in model_service.chat_completion_stream(messages, temperature=0.3):
-                    # 过滤 think 标签内容
-                    clean = re.sub(r"<think>[\s\S]*?</think>", "", chunk)
-                    if not clean.strip():
-                        continue
-
-                    result_text += clean
                     # 实时推送给前端
-                    yield f"data: {json.dumps({'chunk': clean}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
 
                 # 流式完成后解析完整 JSON
                 try:

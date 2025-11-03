@@ -159,16 +159,12 @@ async def analyze_document(
             async def event_generator():
                 full_content = ""  # 用于累积所有片段，生成完整结果
                 async for chunk in model_service.chat_completion_stream(messages, temperature=0.3):
-                    import re
-                    clean = re.sub(r"<RichMediaReference>[\\s\\S]*?<|FunctionCallEnd|>", "", chunk)
-                    if not clean.strip():
-                        continue  # 跳过空内容
                     
                     # 实时推送当前片段
-                    yield f"data: {json.dumps({'chunk': clean}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
                     
                     # 累积片段到完整内容
-                    full_content += clean
+                    full_content += chunk
                 
                 # 所有片段生成完毕后，推送完整结果
                 if full_content:  # 确保有内容才推送

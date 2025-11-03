@@ -118,33 +118,6 @@ def validate_sql_security(sql: str) -> tuple[bool, str]:
     return True, ""
 
 
-def optimize_query_suggestion(sql: str) -> str:
-    """为查询提供优化建议
-
-    参数:
-        sql (str): SQL查询语句
-
-    返回:
-        str: 优化建议
-    """
-    suggestions = []
-    clean_sql = sql.upper().strip()
-
-    # 检查是否使用了LIMIT
-    if 'SELECT' in clean_sql and 'LIMIT' not in clean_sql:
-        suggestions.append("建议添加 LIMIT 子句以避免返回过多数据")
-
-    # 检查是否使用了SELECT *
-    if 'SELECT *' in clean_sql:
-        suggestions.append("建议指定具体的列名而不是使用 SELECT *")
-
-    # 检查是否有WHERE条件
-    if 'SELECT' in clean_sql and 'WHERE' not in clean_sql and 'LIMIT' not in clean_sql:
-        suggestions.append("建议添加 WHERE 条件以缩小查询范围")
-
-    return "; ".join(suggestions) if suggestions else ""
-
-
 @mcp.tool()
 def execute_sql(query: str) -> List[str]:
     """执行安全的SQL查询语句（仅支持只读操作）
@@ -173,9 +146,6 @@ def execute_sql(query: str) -> List[str]:
     if not is_safe:
         logger.warning(f"SQL安全检查失败: {error_msg}")
         return [f"安全检查失败: {error_msg}"]
-
-    # 获取优化建议
-    # optimization_tips = optimize_query_suggestion(query)
 
     config = get_db_config()
     try:
@@ -380,6 +350,283 @@ def get_database_overview() -> List[str]:
 
     return execute_sql(sql)
 
+@mcp.tool()
+def query_employee_qualifications(emp_name: str = "", qual_type: str = "") -> List[str]:
+    """查询员工的资质证书信息
+    
+    参数:
+        emp_name (str): 员工姓名（可选，支持模糊查询）
+        qual_type (str): 资质类型（可选，支持模糊查询）
+    
+    返回:
+        list: 包含员工资质信息的查询结果
+    """
+    conditions = []
+    params = []
+    
+    if emp_name:
+        conditions.append("e.emp_name LIKE %s")
+        params.append(f"%{emp_name}%")
+    
+    if qual_type:
+        conditions.append("eq.qual_name LIKE %s")
+        params.append(f"%{qual_type}%")
+    
+    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+    
+    sql = f"""
+    SELECT 
+        e.emp_name AS '员工姓名',
+        e.position AS '职位',
+        eq.qual_name AS '资质名称',
+        eq.issue_date AS '颁发日期',
+        eq.expire_date AS '过期日期',
+        eq.qual_no AS '资质编号'
+    FROM emp_qualification eq
+    JOIN employee e ON eq.emp_id = e.id
+    {where_clause}
+    ORDER BY eq.expire_date ASC
+    """
+    
+    # 处理参数化查询
+    formatted_sql = sql % tuple(params) if params else sql
+    return execute_sql(formatted_sql)
+
+
+@mcp.tool()
+def query_project_team(project_name: str = "") -> List[str]:
+    """查询项目团队成员信息
+    
+    参数:
+        project_name (str): 项目名称（可选，支持模糊查询）
+    
+    返回:
+        list: 包含项目及参与人员信息的查询结果
+    """
+    condition = "WHERE p.project_name LIKE %s" if project_name else ""
+    param = f"%{project_name}%" if project_name else ""
+    
+    sql = f"""
+    SELECT 
+        p.project_name AS '项目名称',
+        p.project_no AS '项目编号',
+        p.start_date AS '开始日期',
+        p.end_date AS '结束日期',
+        e.emp_name AS '团队成员',
+        e.position AS '成员职位',
+        epe.role AS '项目角色',
+        epe.start_date AS '参与开始日期',
+        epe.end_date AS '参与结束日期'
+    FROM project p
+    JOIN emp_project_experience epe ON p.id = epe.project_id
+    JOIN employee e ON epe.emp_id = e.id
+    {condition}
+    ORDER BY p.project_name, epe.role
+    """
+    
+    formatted_sql = sql % (param,) if project_name else sql
+    return execute_sql(formatted_sql)
+
+
+@mcp.tool()
+def query_company_assets(expire_soon: bool = False) -> List[str]:
+    """查询公司资质、专利和著作权等无形资产
+    
+    参数:
+        expire_soon (bool): 是否只查询即将过期的资产（3个月内）
+    
+    返回:
+        list: 包含公司无形资产信息的查询结果
+    """
+    expire_condition = """
+    AND expire_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 3 MONTH)
+    """ if expire_soon else ""
+    
+    # 资质查询
+    qual_sql = f"""
+    SELECT 
+        '资质' AS '资产类型',
+        company_name AS '公司名称',
+        qual_name AS '资产名称',
+        qual_no AS '编号',
+        issue_date AS '颁发日期',
+        expire_date AS '过期日期',
+        '资质证书' AS '备注'
+    FROM company_qualification
+    WHERE 1=1 {expire_condition}
+    """
+    
+    # 专利查询
+    patent_sql = """
+    SELECT 
+        CONCAT('专利-', patent_type) AS '资产类型',
+        company_name AS '公司名称',
+        patent_name AS '资产名称',
+        patent_no AS '编号',
+        apply_date AS '申请日期',
+        authorize_date AS '授权日期',
+        IF(authorize_date IS NULL, '未授权', '已授权') AS '备注'
+    FROM company_patent
+    """
+    
+    # 著作权查询
+    copyright_sql = """
+    SELECT 
+        CONCAT('著作权-', copyright_type) AS '资产类型',
+        company_name AS '公司名称',
+        copyright_name AS '资产名称',
+        copyright_no AS '编号',
+        apply_date AS '申请日期',
+        authorize_date AS '授权日期',
+        IF(authorize_date IS NULL, '未授权', '已授权') AS '备注'
+    FROM company_copyright
+    """
+    
+    # 组合查询并排序
+    sql = f"""
+    ({qual_sql}) UNION ALL
+    ({patent_sql}) UNION ALL
+    ({copyright_sql})
+    ORDER BY 
+        CASE WHEN expire_date IS NOT NULL THEN expire_date ELSE authorize_date END ASC,
+        资产类型
+    """
+    
+    return execute_sql(sql)
+
+
+@mcp.tool()
+def query_employee_education(education_level: str = "", major: str = "") -> List[str]:
+    """查询员工学历信息
+    
+    参数:
+        education_level (str): 学历层次（如"本科"、"硕士"，可选）
+        major (str): 专业（可选，支持模糊查询）
+    
+    返回:
+        list: 包含员工学历信息的查询结果
+    """
+    conditions = []
+    params = []
+    
+    if education_level:
+        conditions.append("ee.education = %s")
+        params.append(education_level)
+    
+    if major:
+        conditions.append("ee.major LIKE %s")
+        params.append(f"%{major}%")
+    
+    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+    
+    sql = f"""
+    SELECT 
+        e.emp_name AS '员工姓名',
+        e.position AS '职位',
+        ee.education AS '学历',
+        ee.major AS '专业',
+        ee.school AS '毕业院校',
+        ee.grad_date AS '毕业日期',
+        ee.diploma_no AS '毕业证编号'
+    FROM emp_education ee
+    JOIN employee e ON ee.emp_id = e.id
+    {where_clause}
+    ORDER BY ee.education DESC, ee.grad_date DESC
+    """
+    
+    formatted_sql = sql % tuple(params) if params else sql
+    return execute_sql(formatted_sql)
+
+
+@mcp.tool()
+def query_project_contracts(amount_min: float = None, sign_date_start: str = "", sign_date_end: str = "") -> List[str]:
+    """查询项目合同信息
+    
+    参数:
+        amount_min (float): 最小合同金额（可选）
+        sign_date_start (str): 签订日期起始（格式YYYY-MM-DD，可选）
+        sign_date_end (str): 签订日期结束（格式YYYY-MM-DD，可选）
+    
+    返回:
+        list: 包含项目合同信息的查询结果
+    """
+    conditions = []
+    params = []
+    
+    if amount_min is not None:
+        conditions.append("pc.amount >= %s")
+        params.append(amount_min)
+    
+    if sign_date_start:
+        conditions.append("pc.sign_date >= %s")
+        params.append(sign_date_start)
+    
+    if sign_date_end:
+        conditions.append("pc.sign_date <= %s")
+        params.append(sign_date_end)
+    
+    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+    
+    sql = f"""
+    SELECT 
+        p.project_name AS '项目名称',
+        pc.contract_no AS '合同编号',
+        pc.party_a AS '甲方',
+        pc.party_b AS '乙方',
+        pc.sign_date AS '签订日期',
+        pc.amount AS '合同金额(元)',
+        p.start_date AS '项目开始日期',
+        p.end_date AS '项目结束日期'
+    FROM project_contract pc
+    JOIN project p ON pc.project_id = p.id
+    {where_clause}
+    ORDER BY pc.amount DESC, pc.sign_date DESC
+    """
+    
+    formatted_sql = sql % tuple(params) if params else sql
+    return execute_sql(formatted_sql)
+
+
+@mcp.tool()
+def query_expiring_qualifications(days: int = 90) -> List[str]:
+    """查询即将过期的资质（公司和个人）
+    
+    参数:
+        days (int): 未来天数内即将过期（默认90天）
+    
+    返回:
+        list: 包含即将过期资质信息的查询结果
+    """
+    sql = f"""
+    -- 公司资质
+    SELECT 
+        '公司' AS '所属类型',
+        company_name AS '名称',
+        qual_name AS '资质名称',
+        qual_no AS '编号',
+        expire_date AS '过期日期',
+        DATEDIFF(expire_date, CURDATE()) AS '剩余天数'
+    FROM company_qualification
+    WHERE expire_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL {days} DAY)
+    
+    UNION ALL
+    
+    -- 员工资质
+    SELECT 
+        '个人' AS '所属类型',
+        e.emp_name AS '名称',
+        eq.qual_name AS '资质名称',
+        eq.qual_no AS '编号',
+        eq.expire_date AS '过期日期',
+        DATEDIFF(eq.expire_date, CURDATE()) AS '剩余天数'
+    FROM emp_qualification eq
+    JOIN employee e ON eq.emp_id = e.id
+    WHERE eq.expire_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL {days} DAY)
+    
+    ORDER BY 剩余天数 ASC, 所属类型
+    """
+    
+    return execute_sql(sql)
 
 if __name__ == "__main__":
     logger.info("启动MySQL MCP服务器 (只读模式)")

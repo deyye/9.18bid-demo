@@ -12,7 +12,7 @@ class QwenService:
             "temperature": 0.3,
             "max_tokens": 131072,
             "top_p": 0.95,
-            "top_k": 20
+            "top_k": 20,
         }
 
     async def chat_completion_stream(
@@ -46,7 +46,8 @@ class QwenService:
         }
 
         # 3. 异步调用流式接口并逐行解析
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=60*15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 url=f"{self.base_url}/generate",
                 headers=self.headers,

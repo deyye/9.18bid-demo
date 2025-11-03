@@ -22,6 +22,7 @@ app = FastAPI(title="Qwen Local Model Server")
 MODEL_PATH = "/root/.cache/modelscope/hub/models/Qwen/Qwen3-14B"
 TENSOR_PARALLEL_SIZE = 2  # GPU数量
 GPU_MEMORY_UTILIZATION = 0.8  # GPU内存利用率
+MAX_TOKENS = 32768  # 最大上下文长度
 
 # 加载tokenizer
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
@@ -35,15 +36,15 @@ engine_args = AsyncEngineArgs(
     trust_remote_code=True,
     max_num_batched_tokens=32768,  # 批量处理的总Token上限
     
-    # # YARN RoPE 缩放配置
-    rope_scaling={
-        "rope_type": "yarn",          
-        "factor": 4.0,               
-        "original_max_position_embeddings": 32768  
-    },
+    # # # YARN RoPE 缩放配置
+    # rope_scaling={
+    #     "rope_type": "yarn",          
+    #     "factor": 4.0,               
+    #     "original_max_position_embeddings": 32768  
+    # },
     
-    # # 扩展后的模型最大上下文长度
-    max_model_len=131072  # 32768 × 4 = 131072
+    # # # 扩展后的模型最大上下文长度
+    # max_model_len=131072  # 32768 × 4 = 131072
 )
 llm_engine = AsyncLLMEngine.from_engine_args(engine_args)
 
@@ -83,7 +84,7 @@ class GenerateRequest(BaseModel):
     prompt: str
     system_prompt: Optional[str] = "你是一个专业的投标书编写专家，根据用户问题和上下文给出回答。"
     temperature: float = 0.6
-    max_tokens: int = 131072
+    max_tokens: int = MAX_TOKENS
     top_p: float = 0.95
     top_k: int = 20
     stream: bool = False
@@ -93,7 +94,7 @@ class ChatRequest(BaseModel):
     message: str  # 对应客户端发送的消息内容
     system_prompt: Optional[str] = "你是一个专业的投标书编写专家，根据用户问题和上下文给出回答。"
     temperature: float = 0.6
-    max_tokens: int = 131072
+    max_tokens: int = MAX_TOKENS
     stream: bool = False
 
 # 新增：匹配客户端/chat/completions请求的专用模型（核心修改）
@@ -106,7 +107,7 @@ class CompletionsRequest(BaseModel):
     """/chat/completions接口的请求模型，完全匹配客户端格式"""
     model: str  # 客户端必传的模型名称字段
     messages: List[MessageItem]  # 客户端的消息列表
-    max_tokens: Optional[int] = 131072  # 客户端传递的生成Token上限
+    max_tokens: Optional[int] = MAX_TOKENS  # 客户端传递的生成Token上限
     temperature: float = 0.6  # 默认值，允许客户端覆盖
     stream: bool = False  # 流式开关
 
