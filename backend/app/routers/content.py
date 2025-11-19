@@ -160,36 +160,49 @@ async def generate_chapter_content_stream(request: ChapterContentRequest, use_qw
 @router.post("/generate-chapter-hierarchical")
 async def generate_chapter_content_stream(request: ChapterContentRequest, use_qwen: bool = True, stream=True):
     """
-    流式生成单个章节内容 + 自动摘要 + 章节记忆缓存
+    流式为单个章节生成内容
     """
     try:
         model_service = get_model_service(use_qwen)
-        project_id = request.project_id or "default_project"
-        memory = ChapterMemoryManager(project_id)
 
-        # === 加载历史上下文记忆 ===
-        parent_summary = memory.get_chapter_summary(request.parent_id) if request.parent_id else ""
-        sibling_summaries = memory.get_sibling_summaries(request.parent_id, request.chapter["id"])
+        # === 提取结构化数据 ===
+        project_overview = request.project_overview
+        chapter = request.chapter
+        chapter_id = chapter.get("id", "unknown")
+        title = chapter.get("title", "")
+        desc = chapter.get("description", "")
+        parent_chapters = request.parent_chapters or []
+        sibling_chapters = request.sibling_chapters or []
 
-        # === 构建 Prompt ===
+        # === 格式化上下文信息 ===
+        parent_text = "\n".join([f"{p['id']} {p['title']}: {p.get('description', '')}" for p in parent_chapters]) or "无"
+        sibling_text = "\n".join([f"{s['id']} {s['title']}: {s.get('description', '')}" for s in sibling_chapters]) or "无"
+
+        # === 构建提示语 ===
         messages = [
-            {"role": "system", "content": "你是一名专业的章节写作助手，请根据上下文连贯撰写内容。"},
+            {"role": "system", "content": "你是一名专业的招标文档章节生成助手，请根据层级结构和上下文连贯地撰写内容。"},
             {"role": "user", "content": f"""
-项目概述：{request.project_overview}
+项目概述：{project_overview}
 
-父章节摘要：
-{parent_summary or "无"}
+上级章节：
+{parent_text}
 
-兄弟章节摘要：
-{sibling_summaries or "无"}
+同级章节：
+{sibling_text}
 
-当前章节标题：{request.chapter['title']}
-章节描述：{request.chapter['description']}
+当前章节：
+{chapter_id} {title}
+章节说明：{desc}
 
-请生成本章节完整内容，语言连贯，风格统一。
+请撰写本章节完整内容，要求：
+1. 与上级章节保持逻辑衔接；
+2. 语言正式、内容完整；
+3. 不要重复兄弟章节内容；
+4. 保持风格一致。
 """}
         ]
 
+        # === 流式输出 ===
         if stream:
             async def generate():
                 try:
@@ -203,22 +216,8 @@ async def generate_chapter_content_stream(request: ChapterContentRequest, use_qw
                         full_content += clean
                         yield f"data: {json.dumps({'status': 'streaming', 'content': clean}, ensure_ascii=False)}\n\n"
 
-                    # === 生成章节摘要 ===
-                    summary_prompt = [
-                        {"role": "system", "content": "请为以下章节生成简洁摘要（约200字）："},
-                        {"role": "user", "content": full_content}
-                    ]
-                    summary = await model_service.chat_completion(summary_prompt)
+                    yield f"data: {json.dumps({'status': 'completed', 'content': full_content}, ensure_ascii=False)}\n\n"
 
-                    # === 保存章节记忆 ===
-                    memory.save_chapter(
-                        request.chapter["id"],
-                        request.chapter["title"],
-                        full_content,
-                        summary
-                    )
-
-                    yield f"data: {json.dumps({'status': 'completed', 'content': full_content, 'summary': summary}, ensure_ascii=False)}\n\n"
                 except Exception as e:
                     yield f"data: {json.dumps({'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
@@ -231,7 +230,7 @@ async def generate_chapter_content_stream(request: ChapterContentRequest, use_qw
                 }
             )
 
-        # 非流式模式
+        # === 非流式模式 ===
         else:
             full_content = ""
             async for chunk in model_service.chat_completion_stream(messages, temperature=0.7):
@@ -240,21 +239,11 @@ async def generate_chapter_content_stream(request: ChapterContentRequest, use_qw
                     continue
                 full_content += clean
 
-            # === 自动摘要与存储 ===
-            summary_prompt = [
-                {"role": "system", "content": "请为以下章节生成简洁摘要（约200字）："},
-                {"role": "user", "content": full_content}
-            ]
-            summary = await model_service.chat_completion(summary_prompt)
-
-            memory.save_chapter(request.chapter["id"], request.chapter["title"], full_content, summary)
-
             return JSONResponse(
                 content={
                     "status": "completed",
-                    "message": "章节生成完成",
-                    "content": full_content,
-                    "summary": summary
+                    "message": "生成完成",
+                    "content": full_content
                 }
             )
 

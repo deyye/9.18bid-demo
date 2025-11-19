@@ -3,6 +3,7 @@ import json
 import time
 import argparse
 from tqdm import tqdm
+from datetime import datetime
 import os
 
 # 配置API基础URL
@@ -382,8 +383,11 @@ def generate_large_content(use_qwen=True, target_words=250000):
         ch["weight"] = len(ch["children"]) + len(ch["description"]) / 20
 
     print(f"计划生成总字数: {target_words}字，共 {len(outline)} 章。")
-
-    output_file = "generated_large_content.txt"
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    current_dir = os.getcwd()
+    output_file = f"full_content_{timestamp}.txt"
+    output_file = os.path.join(current_dir, output_file)
     if os.path.exists(output_file):
         os.remove(output_file)
 

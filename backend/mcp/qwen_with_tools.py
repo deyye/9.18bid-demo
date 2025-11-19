@@ -196,7 +196,7 @@ class QwenWithMCP:
 async def main():
     server_params = StdioServerParameters(
         command='uv',
-        args=['run', '/home/star/81/langgraph/backend/mcp/server/mysql/main.py'],
+        args=['run', '/home/star/81/bidgen/backend/mcp/server/mysql/main.py'],
         env=None,
     )
     qwen_mcp = QwenWithMCP(server_params)
