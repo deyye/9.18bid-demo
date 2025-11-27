@@ -119,20 +119,27 @@ export async function analyzeDocument(content: string, config: AppState['config'
 
 /**
  * @function generateOutline
- * @description 根据招标文件分析结果，请求后端 AI 生成标书目录。
- * @param analysisResult - 招标文件分析结果。
+ * @description 根据项目概述和技术要求，请求后端 AI 生成标书目录。
+ * @param overview - 项目概述。
+ * @param requirements - 技术评分要求。
  * @param config - 当前的 AI 配置。
  * @returns 标书目录结构 OutlineItem[]。
  */
-export async function generateOutline(analysisResult: string, config: AppState['config']): Promise<OutlineItem[]> {
+export async function generateOutline(
+    overview: string, 
+    requirements: string, 
+    config: AppState['config']
+): Promise<OutlineItem[]> {
     // 假设后端路由: /api/outline/generate
     const response = await fetch(`${API_BASE_URL}/outline/generate`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
+        // ✅ 修正：请求体必须匹配后端 OutlineRequest (overview, requirements)
         body: JSON.stringify({ 
-            analysis_result: analysisResult, 
+            overview: overview, 
+            requirements: requirements,
             config: {
                 api_key: config.apiKey,
                 model_name: config.modelName,
@@ -146,9 +153,8 @@ export async function generateOutline(analysisResult: string, config: AppState['
     }
 
     const data = await response.json();
-    return data.outline || []; // 假设后端返回 { outline: [...] }
+    return data.outline || []; 
 }
-
 
 // ----------------------------------------------------
 // 4. 内容生成 API
@@ -156,25 +162,29 @@ export async function generateOutline(analysisResult: string, config: AppState['
 
 /**
  * @function generateContent
- * @description 根据完整大纲（包含字数设定）请求后端 AI 生成所有章节内容。
- * @returns 包含所有章节内容的字典 { chapterId: content }。
+ * @description 根据完整大纲请求后端 AI 生成所有章节内容。
  */
 export async function generateContent(
     documentContent: string,
-    analysisResult: string,
+    overview: string,      // ✅ 新增参数
+    requirements: string,  // ✅ 新增参数
     outline: OutlineItem[],
     config: AppState['config']
 ): Promise<{ [key: string]: string }> {
-    // 假设后端路由: /api/content/generate
-    const response = await fetch(`${API_BASE_URL}/content/generate`, {
+    
+    // 为了确保生成内容时 AI 能看到所有上下文，我们将概述和要求合并传给 project_overview
+    // (因为后端 ContentGenerationRequest 目前只有一个 project_overview 字段)
+    const combinedOverview = `项目概述：\n${overview}\n\n技术评分要求：\n${requirements}`;
+
+    const response = await fetch(`${API_BASE_URL}/content/generate-full-project`, { // 注意：这里使用了 generate-full-project 路由
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({ 
-            document_content: documentContent,
-            analysis_result: analysisResult,
-            outline: outline, 
+            // document_content: documentContent, // 后端 ContentGenerationRequest 似乎没定义这个，暂时注释或保留视后端情况而定
+            project_overview: combinedOverview,   // ✅ 传入合并后的上下文
+            outline: outline[0], // ⚠️ 注意：generate_controller.py 似乎期望单个根节点 (Dict)，如果 outline 是数组请传 outline[0] 或调整结构
             config: {
                 api_key: config.apiKey,
                 model_name: config.modelName,
@@ -187,9 +197,10 @@ export async function generateContent(
         throw new Error(errorData.detail || '内容生成失败');
     }
 
-    return await response.json(); // 假设后端返回 { chapterId: content, ... }
+    // 后端返回结构为 { contents: {...}, ... }
+    const data = await response.json();
+    return data.contents || {}; 
 }
-
 
 // ----------------------------------------------------
 // 5. 导出 API

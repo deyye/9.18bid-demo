@@ -147,8 +147,8 @@ const DocumentAnalysis: React.FC<DocumentAnalysisProps> = ({ onNext }) => {
     };
     
     const isReadyForAnalysis = state.documentContent !== '' && !analyzing;
-    const isAnalysisDone = state.analysisResult !== '';
-
+    const isAnalysisDone = !!(state.overview && state.requirements);
+    
     return (
         <AntCard title="智能文档解析" style={{ minHeight: '80vh' }}>
             <Spin spinning={uploading || analyzing} tip={uploading ? "文件处理中..." : "AI 正在分析..."}>

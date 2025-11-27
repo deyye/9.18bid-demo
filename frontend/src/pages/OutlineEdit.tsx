@@ -1,10 +1,8 @@
-import React from 'react';
-import { Button, Card, Tree, Input, InputNumber, Space, Typography, message, Spin } from 'antd';
+import React, { useState } from 'react';
+import { Button, Card, Tree, InputNumber, Space, Typography, message, Spin } from 'antd';
 import { OutlineItem, ProcessStep } from '../types';
 import useAppState from '../hooks/useAppState';
 import { generateOutline, generateContent } from '../services/api'; 
-import { EditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-// import DraggableOutline from '../components/DraggableOutline'; // 假设这个组件存在
 
 const { Title, Text } = Typography;
 
@@ -14,8 +12,32 @@ interface OutlineEditProps {
 
 const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
     const { state, setState } = useAppState();
-    const [loading, setLoading] = React.useState(false);
+    const [loading, setLoading] = useState(false);
     
+    // -------------------------------------------------------------------------
+    // 1. 辅助函数定义 (这些函数必须存在，否则 Tree 无法渲染)
+    // -------------------------------------------------------------------------
+
+    // 递归查找并更新字数
+    const updateWordCountRecursively = (items: OutlineItem[], id: string, wordCount: number | null): OutlineItem[] => {
+        return items.map(item => {
+            if (item.id === id) {
+                // 如果 wordCount 为 null 或 0，则设置为 undefined
+                return { ...item, wordCount: (wordCount === null || wordCount === 0) ? undefined : wordCount };
+            }
+            if (item.children) {
+                return { ...item, children: updateWordCountRecursively(item.children, id, wordCount) };
+            }
+            return item;
+        });
+    };
+
+    // 处理字数变化 (本地状态更新)
+    const handleWordCountChange = (id: string, value: number | null) => {
+        const newOutline = updateWordCountRecursively(state.outline, id, value);
+        setState({ outline: newOutline });
+    };
+
     // 转换 OutlineItem[] 为 Ant Design Tree Data (需要 title, key, children)
     const outlineToTreeData = (outline: OutlineItem[]): any[] => {
         return outline.map(item => ({
@@ -24,7 +46,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
             title: (
                 <Space>
                     <Text strong style={{ minWidth: 200 }}>{item.title}</Text>
-                    {/* 优化点 1: 字数设置 InputNumber */}
+                    {/* 优化点: 字数设置 InputNumber */}
                     {item.level >= 2 && (
                         <InputNumber
                             min={100}
@@ -44,45 +66,31 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
         }));
     };
 
-    // 递归查找并更新字数
-    const updateWordCountRecursively = (items: OutlineItem[], id: string, wordCount: number | null): OutlineItem[] => {
-        return items.map(item => {
-            if (item.id === id) {
-                // 如果 wordCount 为 null 或 0，则设置为 undefined，避免不必要的后端传输
-                return { ...item, wordCount: (wordCount === null || wordCount === 0) ? undefined : wordCount };
-            }
-            if (item.children) {
-                return { ...item, children: updateWordCountRecursively(item.children, id, wordCount) };
-            }
-            return item;
-        });
-    };
-
-    // 处理字数变化 (本地状态更新)
-    const handleWordCountChange = (id: string, value: number | null) => {
-        const newOutline = updateWordCountRecursively(state.outline, id, value);
-        // ⬇️ 状态更新，依赖 useAppState 的 Partial<AppState> 修复
-        setState({ outline: newOutline });
-    };
+    // -------------------------------------------------------------------------
+    // 2. 业务逻辑函数 (已适配新的 overview/requirements 参数)
+    // -------------------------------------------------------------------------
 
     // 模拟 AI 生成目录
     const handleGenerateOutline = async () => {
-        if (!state.documentContent || state.analysisResult === '') {
-            message.error('请先完成文档分析步骤！');
+        // 检查必要字段是否存在
+        if (!state.documentContent || !state.overview || !state.requirements) {
+            message.error('请先完成文档分析步骤（需包含项目概述和技术要求）！');
             return;
         }
 
         setLoading(true);
         try {
-            const result = await generateOutline(state.analysisResult, state.config);
-            // 确保返回的 result 是 OutlineItem[] 结构
+            // 调用 API，传入新的参数
+            const result = await generateOutline(state.overview, state.requirements, state.config);
+            
             setState({ 
                 outline: result, 
                 currentStep: ProcessStep.OUTLINE_EDIT // 保持在当前步骤
             });
             message.success('AI 目录生成成功！请调整字数后开始内容生成。');
-        } catch (error) {
-            message.error('AI 目录生成失败。');
+        } catch (error: any) {
+            console.error(error);
+            message.error('AI 目录生成失败，请检查后端服务。');
         } finally {
             setLoading(false);
         }
@@ -97,24 +105,35 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
         setLoading(true);
         try {
             message.info('开始内容生成，这可能需要一些时间...');
-            // 此时 state.outline 中包含了 wordCount 字段，会被传给后端
-            const result = await generateContent(state.documentContent, state.analysisResult, state.outline, state.config);
             
-            // ⬇️ 状态更新，依赖 useAppState 的 Partial<AppState> 修复
+            // 调用 API，传递 overview 和 requirements
+            const result = await generateContent(
+                state.documentContent, 
+                state.overview, 
+                state.requirements, 
+                state.outline, 
+                state.config
+            );
+            
             setState({ generatedContent: result });
             onNext(); // 跳转到内容编辑页面
-        } catch (error) {
+        } catch (error: any) {
+            console.error(error);
             message.error('内容生成失败。');
         } finally {
             setLoading(false);
         }
     };
 
+    // -------------------------------------------------------------------------
+    // 3. 渲染
+    // -------------------------------------------------------------------------
+
     return (
         <Card title="AI生成目录与字数设定" style={{ minHeight: '80vh' }}>
             <Spin spinning={loading} tip="AI正在工作...">
                 <Space style={{ marginBottom: 16 }}>
-                    <Button onClick={handleGenerateOutline} disabled={!state.documentContent || loading} type="primary">
+                    <Button onClick={handleGenerateOutline} disabled={!state.overview || loading} type="primary">
                         重新生成目录
                     </Button>
                     <Button onClick={handleGenerateContent} disabled={state.outline.length === 0 || loading} type="primary" danger>
@@ -127,13 +146,12 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
                 {state.outline.length === 0 ? (
                     <Text type="secondary">请先解析招标文件并生成目录。</Text>
                 ) : (
-                    // 使用 Ant Design Tree 渲染，并在 title 中嵌入 InputNumber
+                    // 使用 Ant Design Tree 渲染
                     <div style={{ maxHeight: '60vh', overflowY: 'auto', border: '1px solid #f0f0f0', padding: 10 }}>
                         <Tree
                             showLine={true}
                             defaultExpandAll={true}
-                            treeData={outlineToTreeData(state.outline)}
-                            // onDrop={handleDrop} // 拖拽逻辑可以在这里实现
+                            treeData={outlineToTreeData(state.outline)} // ✅ 现在可以找到这个函数了
                         />
                     </div>
                 )}
