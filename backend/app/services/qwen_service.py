@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
-from typing import List, Optional, Dict, AsyncGenerator, Literal
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, AsyncGenerator, Literal, Union
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.utils import random_uuid
@@ -15,18 +16,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 os.environ["VLLM_USE_MODELSCOPE"] = "true"
-# 初始化FastAPI应用
-app = FastAPI(title="Qwen Local Model Server")
 
-# 模型配置 - 根据实际环境调整
+# 初始化FastAPI应用
+app = FastAPI(title="OpenAI Compatible API Server", version="1.0.0")
+
+# 模型配置
 MODEL_PATH = "/root/.cache/modelscope/hub/models/Qwen/Qwen3-14B"
-TENSOR_PARALLEL_SIZE = 2  # GPU数量
-GPU_MEMORY_UTILIZATION = 0.8  # GPU内存利用率
-MAX_TOKENS = 32768*4  # 最大上下文长度
+MODEL_NAME = "Qwen3-14B"  # OpenAI兼容的模型名称
+TENSOR_PARALLEL_SIZE = 2
+GPU_MEMORY_UTILIZATION = 0.8
+MAX_TOKENS = 32768 * 4
 
 # 加载tokenizer
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
-tokenizer.pad_token = tokenizer.eos_token  # 设置pad token
+tokenizer.pad_token = tokenizer.eos_token
 
 # 初始化vLLM异步引擎
 engine_args = AsyncEngineArgs(
@@ -34,373 +37,345 @@ engine_args = AsyncEngineArgs(
     tensor_parallel_size=TENSOR_PARALLEL_SIZE,
     gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
     trust_remote_code=True,
-    max_num_batched_tokens=32768,  # 批量处理的总Token上限
-    
-    # # # YARN RoPE 缩放配置
+    max_num_batched_tokens=32768,
     rope_scaling={
-        "rope_type": "yarn",          
-        "factor": 4.0,               
-        "original_max_position_embeddings": 32768  
+        "rope_type": "yarn",
+        "factor": 4.0,
+        "original_max_position_embeddings": 32768
     },
-    
-    # # # 扩展后的模型最大上下文长度
-    max_model_len=131072  # 32768 × 4 = 131072
+    max_model_len=131072
 )
 llm_engine = AsyncLLMEngine.from_engine_args(engine_args)
 
-print(f"Qwen模型服务已启动，模型路径: {MODEL_PATH}")
+logger.info(f"模型服务已启动，模型路径: {MODEL_PATH}")
 
-# 请求日志中间件
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    # 记录请求路径和方法
-    print(f"\n收到请求: {request.method} {request.url}")
-    
-    # 记录请求头
-    print("请求头:", dict(request.headers))
-    
-    # 记录请求体（仅对POST/PUT等有body的请求有效）
-    if request.method in ["POST", "PUT", "PATCH"]:
-        try:
-            # 读取请求体（注意：FastAPI中request.body()只能读取一次，需特殊处理）
-            body = await request.body()
-            if body:
-                # 尝试解析为JSON
-                body_json = json.loads(body.decode())
-                print("请求体:", json.dumps(body_json, indent=2))
-            else:
-                print("请求体: 空")
-        except json.JSONDecodeError:
-            print("请求体: 非JSON格式 ->", body.decode())
-        except Exception as e:
-            print(f"读取请求体失败: {str(e)}")
-    
-    # 继续处理请求
-    response = await call_next(request)
-    return response
 
-# 定义请求和响应的数据模型
-class GenerateRequest(BaseModel):
-    prompt: str
-    system_prompt: Optional[str] = "你是一个专业的投标书编写专家，根据用户问题和上下文给出回答。"
-    temperature: float = 0.6
-    max_tokens: int = MAX_TOKENS
-    top_p: float = 0.95
-    top_k: int = 20
-    stream: bool = False
+# ============ OpenAI 标准数据模型 ============
 
-# 新增：为/api/chat接口定义专用的请求模型，可能与客户端匹配
-class ChatRequest(BaseModel):
-    message: str  # 对应客户端发送的消息内容
-    system_prompt: Optional[str] = "你是一个专业的投标书编写专家，根据用户问题和上下文给出回答。"
-    temperature: float = 0.6
-    max_tokens: int = MAX_TOKENS
-    stream: bool = False
+class Message(BaseModel):
+    """OpenAI标准消息格式"""
+    role: Literal["system", "user", "assistant", "function"]
+    content: str
+    name: Optional[str] = None
 
-# 新增：匹配客户端/chat/completions请求的专用模型（核心修改）
-class MessageItem(BaseModel):
-    """客户端messages数组中的单个消息结构"""
-    role: Literal["system", "user", "assistant"]  # 严格匹配客户端角色类型
-    content: str  # 消息内容
 
-class CompletionsRequest(BaseModel):
-    """/chat/completions接口的请求模型，完全匹配客户端格式"""
-    model: str  # 客户端必传的模型名称字段
-    messages: List[MessageItem]  # 客户端的消息列表
-    max_tokens: Optional[int] = MAX_TOKENS  # 客户端传递的生成Token上限
-    temperature: float = 0.6  # 默认值，允许客户端覆盖
-    stream: bool = False  # 流式开关
+class ChatCompletionRequest(BaseModel):
+    """OpenAI /v1/chat/completions 请求格式"""
+    model: str
+    messages: List[Message]
+    temperature: Optional[float] = Field(default=0.7, ge=0, le=2)
+    top_p: Optional[float] = Field(default=1.0, ge=0, le=1)
+    n: Optional[int] = Field(default=1, ge=1, le=1)  # 目前只支持1
+    stream: Optional[bool] = False
+    stop: Optional[Union[str, List[str]]] = None
+    max_tokens: Optional[int] = Field(default=MAX_TOKENS, ge=1)
+    presence_penalty: Optional[float] = Field(default=0, ge=-2, le=2)
+    frequency_penalty: Optional[float] = Field(default=0, ge=-2, le=2)
+    logit_bias: Optional[Dict[str, float]] = None
+    user: Optional[str] = None
 
-class GenerateResponse(BaseModel):
-    request_id: str
-    generated_text: str
-    created: int
+
+class ChatCompletionResponseChoice(BaseModel):
+    """OpenAI响应中的单个选择"""
+    index: int
+    message: Message
     finish_reason: Optional[str] = None
 
-class QwenService:
-    """Qwen服务类，适配vLLM的异步生成器"""
-    
+
+class ChatCompletionResponseStreamChoice(BaseModel):
+    """OpenAI流式响应中的单个选择"""
+    index: int
+    delta: Dict[str, str]
+    finish_reason: Optional[str] = None
+
+
+class UsageInfo(BaseModel):
+    """Token使用统计"""
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+class ChatCompletionResponse(BaseModel):
+    """OpenAI /v1/chat/completions 响应格式"""
+    id: str
+    object: Literal["chat.completion"] = "chat.completion"
+    created: int
+    model: str
+    choices: List[ChatCompletionResponseChoice]
+    usage: UsageInfo
+
+
+class ChatCompletionStreamResponse(BaseModel):
+    """OpenAI流式响应格式"""
+    id: str
+    object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
+    created: int
+    model: str
+    choices: List[ChatCompletionResponseStreamChoice]
+
+
+class ModelCard(BaseModel):
+    """模型信息卡片"""
+    id: str
+    object: Literal["model"] = "model"
+    created: int
+    owned_by: str
+
+
+class ModelList(BaseModel):
+    """模型列表"""
+    object: Literal["list"] = "list"
+    data: List[ModelCard]
+
+
+# ============ 服务类 ============
+
+class OpenAICompatibleService:
+    """OpenAI兼容的服务类"""
+
     def __init__(self, engine: AsyncLLMEngine, tokenizer: AutoTokenizer):
         self.engine = engine
         self.tokenizer = tokenizer
-    
-    def build_prompt(self, prompt: str, system_prompt: str) -> str:
-        """构建符合Qwen模型要求的提示词（原功能保留）"""
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
-        
+
+    def _build_prompt(self, messages: List[Message]) -> str:
+        """将消息列表转换为模型所需的提示词格式"""
+        messages_dict = [{"role": msg.role, "content": msg.content} for msg in messages]
         return self.tokenizer.apply_chat_template(
-            messages,
+            messages_dict,
             tokenize=False,
             add_generation_prompt=True
         )
-    
-    def build_prompt_from_messages(self, messages: List[Dict]) -> str:
-        """新增：从客户端messages列表构建提示词（适配/completions接口）"""
-        return self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-    
-    async def generate(self, prompt: str, system_prompt: str = "", 
-                      temperature: float = 0.6, max_tokens: int = MAX_TOKENS,
-                      top_p: float = 0.95, top_k: int = 20) -> GenerateResponse:
-        """非流式生成（原功能保留，扩展system_prompt默认值）"""
-        request_id = random_uuid()
+
+    def _count_tokens(self, text: str) -> int:
+        """统计文本的token数量"""
+        return len(self.tokenizer.encode(text))
+
+    async def create_chat_completion(
+        self,
+        request: ChatCompletionRequest
+    ) -> ChatCompletionResponse:
+        """非流式聊天补全"""
+        request_id = f"chatcmpl-{random_uuid()}"
         created = int(time.time())
-        
-        # 构建提示词和采样参数
-        formatted_prompt = self.build_prompt(prompt, system_prompt) if system_prompt else self.build_prompt_from_messages(prompt)
+
+        # 构建提示词
+        formatted_prompt = self._build_prompt(request.messages)
+        prompt_tokens = self._count_tokens(formatted_prompt)
+
+        # 设置采样参数
         sampling_params = SamplingParams(
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            stop=self.tokenizer.eos_token,
-            skip_special_tokens=True
+            temperature=request.temperature,
+            top_p=request.top_p,
+            max_tokens=request.max_tokens,
+            stop=request.stop if request.stop else [self.tokenizer.eos_token],
+            skip_special_tokens=True,
+            presence_penalty=request.presence_penalty,
+            frequency_penalty=request.frequency_penalty
         )
-        
-        # 用async for迭代异步生成器，取最后一个结果
+
+        # 生成响应
         final_output = None
         async for output in self.engine.generate(formatted_prompt, sampling_params, request_id):
             final_output = output
-        
+
         if final_output is None:
             raise ValueError("未获取到模型生成结果")
-        
-        # 解析最终结果
+
+        # 解析结果
         generated_text = final_output.outputs[0].text.strip()
         finish_reason = final_output.outputs[0].finish_reason
-        
-        return GenerateResponse(
-            request_id=request_id,
-            generated_text=generated_text,
+        completion_tokens = self._count_tokens(generated_text)
+
+        # 构建OpenAI标准响应
+        return ChatCompletionResponse(
+            id=request_id,
             created=created,
-            finish_reason=finish_reason
+            model=request.model,
+            choices=[
+                ChatCompletionResponseChoice(
+                    index=0,
+                    message=Message(role="assistant", content=generated_text),
+                    finish_reason=finish_reason
+                )
+            ],
+            usage=UsageInfo(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens
+            )
         )
-    
-    async def generate_stream(self, prompt: str, system_prompt: str = "",
-                             temperature: float = 0.6, max_tokens: int = MAX_TOKENS,
-                             top_p: float = 0.95, top_k: int = 20) -> AsyncGenerator[str, None]:
-        """流式生成（原功能保留，扩展system_prompt默认值）"""
-        request_id = random_uuid()
+
+    async def create_chat_completion_stream(
+        self,
+        request: ChatCompletionRequest
+    ) -> AsyncGenerator[str, None]:
+        """流式聊天补全"""
+        request_id = f"chatcmpl-{random_uuid()}"
         created = int(time.time())
 
-        # 构建提示词和采样参数
-        formatted_prompt = self.build_prompt(prompt, system_prompt) if system_prompt else self.build_prompt_from_messages(prompt)
+        # 构建提示词
+        formatted_prompt = self._build_prompt(request.messages)
+
+        # 设置采样参数
         sampling_params = SamplingParams(
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            stop=self.tokenizer.eos_token,
-            skip_special_tokens=True
+            temperature=request.temperature,
+            top_p=request.top_p,
+            max_tokens=request.max_tokens,
+            stop=request.stop if request.stop else [self.tokenizer.eos_token],
+            skip_special_tokens=True,
+            presence_penalty=request.presence_penalty,
+            frequency_penalty=request.frequency_penalty
         )
 
-        prev_text = ""  # 用来存放历史生成结果
+        # 流式生成
+        prev_text = ""
         async for output in self.engine.generate(formatted_prompt, sampling_params, request_id):
             full_text = output.outputs[0].text
             finish_reason = output.outputs[0].finish_reason
 
-            # 只取新增部分
+            # 计算新增文本
             new_text = full_text[len(prev_text):]
             prev_text = full_text
 
             if new_text:
-                yield json.dumps({
-                    "request_id": request_id,
-                    "chunk": new_text,
-                    "created": created,
-                    "finish_reason": finish_reason
-                }) + "\n"
+                # 构建流式响应
+                chunk = ChatCompletionStreamResponse(
+                    id=request_id,
+                    created=created,
+                    model=request.model,
+                    choices=[
+                        ChatCompletionResponseStreamChoice(
+                            index=0,
+                            delta={"role": "assistant", "content": new_text},
+                            finish_reason=None
+                        )
+                    ]
+                )
+                yield f"data: {chunk.model_dump_json()}\n\n"
 
+            # 发送结束标记
             if finish_reason is not None:
+                final_chunk = ChatCompletionStreamResponse(
+                    id=request_id,
+                    created=created,
+                    model=request.model,
+                    choices=[
+                        ChatCompletionResponseStreamChoice(
+                            index=0,
+                            delta={},
+                            finish_reason=finish_reason
+                        )
+                    ]
+                )
+                yield f"data: {final_chunk.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
                 break
 
-# 初始化Qwen服务
-qwen_service = QwenService(llm_engine, tokenizer)
 
-# 原有/generate接口（功能完全保留）
-@app.post("/generate", response_model=GenerateResponse)
-async def generate(request: GenerateRequest):
-    """生成文本响应的API端点"""
+# 初始化服务
+service = OpenAICompatibleService(llm_engine, tokenizer)
+
+
+# ============ API 端点 ============
+
+@app.post("/v1/chat/completions")
+async def create_chat_completion(request: ChatCompletionRequest):
+    """
+    OpenAI标准的聊天补全接口
+    兼容 OpenAI Python SDK 和其他标准客户端
+    """
     try:
+        # 验证消息列表
+        if not request.messages:
+            raise HTTPException(status_code=400, detail="消息列表不能为空")
+
+        # 流式响应
         if request.stream:
-            async def stream_generator():
-                async for chunk in qwen_service.generate_stream(
-                    prompt=request.prompt,
-                    system_prompt=request.system_prompt,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens
-                ):
-                    # SSE 格式
-                    yield f"data: {chunk}\n\n"
-            
-            from fastapi.responses import StreamingResponse
             return StreamingResponse(
-                stream_generator(),
+                service.create_chat_completion_stream(request),
                 media_type="text/event-stream"
             )
-        else:
-            # 非流式响应
-            return await qwen_service.generate(
-                prompt=request.prompt,
-                system_prompt=request.system_prompt,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens
-            )
-    except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        logger.error(f"生成过程出错: {error_details}")
-        raise HTTPException(status_code=500, detail=f"模型生成失败: {str(e)}")
 
-# 修改：/chat/completions接口（适配客户端请求格式）
-@app.post("/api/chat")
-async def chat_completions(request: CompletionsRequest):
-    """适配客户端的/chat/completions请求，支持model和messages字段"""
-    try:
-        # 1. 基础校验：确保包含user消息
-        if not request.messages or not any(item.role == "user" for item in request.messages):
-            raise HTTPException(status_code=400, detail="请求必须包含至少一条'user'角色的消息")
-        
-        # 2. 可选：校验模型名称（如果需要限制仅支持Qwen3-14B）
-        # if request.model != "Qwen3-14B":
-        #     raise HTTPException(status_code=400, detail=f"不支持的模型: {request.model}，仅支持Qwen3-14B")
-        
-        # 3. 转换消息格式（Pydantic模型转字典列表）
-        messages_dict = [{"role": item.role, "content": item.content} for item in request.messages]
-        
-        # 4. 流式响应处理
-        if request.stream:
-            async def stream_generator():
-                async for chunk in qwen_service.generate_stream(
-                    prompt=messages_dict,  # 传入消息列表
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens
-                ):
-                    # 转换为客户端易解析的SSE格式
-                    yield f"data: {chunk}\n\n"
-            
-            from fastapi.responses import StreamingResponse
-            return StreamingResponse(
-                stream_generator(),
-                media_type="text/event-stream"
-            )
-        else:
-            # 5. 非流式响应处理
-            response = await qwen_service.generate(
-                prompt=messages_dict,  # 传入消息列表
-                temperature=request.temperature,
-                max_tokens=request.max_tokens
-            )
-            
-            # 6. 返回格式适配（模拟类OpenAI结构，便于客户端解析）
-            return {
-                "id": f"chatcmpl-{response.request_id}",
-                "object": "chat.completion",
-                "created": response.created,
-                "model": request.model,  # 回传客户端请求的模型名称
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": response.generated_text},
-                        "finish_reason": response.finish_reason
-                    }
-                ],
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}  # 可按需补充Token统计
-            }
+        # 非流式响应
+        response = await service.create_chat_completion(request)
+        return response
+
     except HTTPException:
-        raise  # 直接抛出已定义的HTTP异常
+        raise
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        logger.error(f"/chat/completions 接口出错: {error_details}")
-        raise HTTPException(status_code=500, detail=f"聊天请求处理失败: {str(e)}")
+        logger.error(f"聊天补全失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"内部服务器错误: {str(e)}")
 
-# 原有/v1/models接口（功能完全保留）
+
 @app.get("/v1/models")
-async def list_models():
-    """返回可用的模型列表"""
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": "qwen-14b",
-                "object": "model",
-                "owned_by": "local",
-                "permission": [],
-            }
+async def list_models() -> ModelList:
+    """
+    OpenAI标准的模型列表接口
+    返回可用的模型信息
+    """
+    return ModelList(
+        data=[
+            ModelCard(
+                id=MODEL_NAME,
+                created=int(time.time()),
+                owned_by="local"
+            )
         ]
-    }
+    )
 
-# 原有/health接口（功能完全保留）
+
+@app.get("/v1/models/{model_id}")
+async def retrieve_model(model_id: str) -> ModelCard:
+    """
+    OpenAI标准的获取单个模型信息接口
+    """
+    if model_id != MODEL_NAME:
+        raise HTTPException(status_code=404, detail=f"模型 {model_id} 不存在")
+
+    return ModelCard(
+        id=MODEL_NAME,
+        created=int(time.time()),
+        owned_by="local"
+    )
+
+
 @app.get("/health")
 async def health_check():
     """健康检查端点"""
     return {
         "status": "healthy",
-        "model": MODEL_PATH.split("/")[-1],
+        "model": MODEL_NAME,
         "timestamp": int(time.time())
     }
 
-@app.post("/chat/completions")
-async def chat_completions(request: CompletionsRequest):
-    """适配客户端的/chat/completions请求，支持model和messages字段"""
-    try:
-        # 1. 基础校验：确保包含user消息
-        if not request.messages or not any(item.role == "user" for item in request.messages):
-            raise HTTPException(status_code=400, detail="请求必须包含至少一条'user'角色的消息")
-        
-        # 2. 可选：校验模型名称（如果需要限制仅支持Qwen3-14B）
-        # if request.model != "Qwen3-14B":
-        #     raise HTTPException(status_code=400, detail=f"不支持的模型: {request.model}，仅支持Qwen3-14B")
-        
-        # 3. 转换消息格式（Pydantic模型转字典列表）
-        messages_dict = [{"role": item.role, "content": item.content} for item in request.messages]
-        request.stream = False
-        # 4. 流式响应处理
-        if request.stream:
-            async def stream_generator():
-                async for chunk in qwen_service.generate_stream(
-                    prompt=messages_dict,  # 传入消息列表
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens
-                ):
-                    # 转换为客户端易解析的SSE格式
-                    yield f"data: {chunk}\n\n"
-            
-            from fastapi.responses import StreamingResponse
-            return StreamingResponse(
-                stream_generator(),
-                media_type="text/event-stream"
-            )
-        else:
-            # 5. 非流式响应处理
-            response = await qwen_service.generate(
-                prompt=messages_dict,  # 传入消息列表
-                temperature=request.temperature,
-                max_tokens=request.max_tokens
-            )
-            print(response)
-            # 6. 返回格式适配（模拟类OpenAI结构，便于客户端解析）
-            return response
-    except HTTPException:
-        raise  # 直接抛出已定义的HTTP异常
-    except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        logger.error(f"/chat/completions 接口出错: {error_details}")
-        raise HTTPException(status_code=500, detail=f"聊天请求处理失败: {str(e)}")
-    
-# 启动服务
+
+# ============ 中间件 ============
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """请求日志中间件"""
+    logger.info(f"收到请求: {request.method} {request.url}")
+
+    if request.method in ["POST", "PUT", "PATCH"]:
+        try:
+            body = await request.body()
+            if body:
+                body_json = json.loads(body.decode())
+                logger.info(f"请求体: {json.dumps(body_json, indent=2)}")
+        except Exception as e:
+            logger.warning(f"无法解析请求体: {str(e)}")
+
+    response = await call_next(request)
+    return response
+
+
+# ============ 启动服务 ============
+
 if __name__ == "__main__":
     try:
         import uvicorn
-        logger.info(f"准备启动服务，监听端口: 10086")
+        logger.info("准备启动OpenAI兼容API服务，监听端口: 10086")
         uvicorn.run(app, host="0.0.0.0", port=10086, workers=1, log_level="info")
     except Exception as e:
         logger.error(f"服务启动失败: {str(e)}", exc_info=True)
