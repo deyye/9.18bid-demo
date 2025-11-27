@@ -1,67 +1,50 @@
-from typing import AsyncGenerator, Optional, List, Dict
+from typing import AsyncGenerator, Optional, List, Dict, Any
 import aiohttp
 import json
 import logging
 
-# 配置日志
 logger = logging.getLogger(__name__)
 
 class QwenService:
     """
-    Qwen服务类（适配 vLLM 原生 OpenAI 兼容接口）
+    Qwen服务类（适配 OpenAI 兼容接口，完美支持 qwen_openai.py）
     """
     def __init__(self, base_url: str = "http://localhost:10086"):
-        # 确保 base_url 不以 /v1 结尾（我们在请求时自动拼接）
         self.base_url = base_url.rstrip("/")
         self.headers = {"Content-Type": "application/json"}
-        
-        # 默认参数
         self.default_params = {
             "temperature": 0.7,
-            "max_tokens": 131071,  # vLLM 支持较大的上下文
+            "max_tokens": 131072,
             "top_p": 0.95,
             "top_k": 20,
         }
-        
-        # 缓存模型名称，避免每次请求都查
         self._cached_model_name: Optional[str] = None
 
     async def _get_running_model(self, session: aiohttp.ClientSession) -> str:
-        """
-        动态获取 vLLM 当前运行的模型名称
-        """
+        """动态获取当前运行的模型名称"""
         if self._cached_model_name:
             return self._cached_model_name
-            
         try:
-            # vLLM 提供标准的 /v1/models 接口
             async with session.get(f"{self.base_url}/v1/models", headers=self.headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    # 获取列表中的第一个模型 ID
                     model_id = data["data"][0]["id"]
                     self._cached_model_name = model_id
-                    logger.info(f"已自动探测到 vLLM 模型名称: {model_id}")
                     return model_id
         except Exception as e:
-            logger.warning(f"无法获取模型列表，将使用默认名称: {e}")
-        
-        # 如果获取失败，返回一个通用默认值（vLLM 有时对模型名不敏感，但也可能报错）
-        return "Qwen/Qwen2.5-14B-Instruct"
+            logger.warning(f"获取模型名失败，使用默认值: {e}")
+        return "Qwen3-14B"
 
     async def chat_completion_stream(
         self, 
         messages: List[Dict[str, str]], 
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        **kwargs  # ✅ 新增：接收 response_format 等额外参数，防止报错
     ) -> AsyncGenerator[str, None]:
-        """
-        流式输出 (Stream=True)
-        """
         async with aiohttp.ClientSession() as session:
-            # 1. 准备模型名称
             model_name = await self._get_running_model(session)
             
-            # 2. 构造 OpenAI 标准请求体
+            # 构造 Payload
             payload = {
                 "model": model_name,
                 "messages": messages,
@@ -70,53 +53,35 @@ class QwenService:
                 "max_tokens": self.default_params["max_tokens"],
                 "top_p": self.default_params["top_p"],
             }
+            
+            # 注意：我们这里故意不把 kwargs (如 response_format) 传给 payload
+            # 因为 qwen_openai.py 可能不支持这些参数，传了反而会报 422 错误。
+            # Qwen 模型通常通过 Prompt 指令就能很好地输出 JSON，不需要强制 response_format。
 
             try:
-                # 3. 发起请求
-                async with session.post(
-                    f"{self.base_url}/v1/chat/completions",
-                    headers=self.headers,
-                    json=payload
-                ) as response:
+                async with session.post(f"{self.base_url}/v1/chat/completions", headers=self.headers, json=payload) as response:
                     await self._check_response_status(response)
-                    
-                    # 4. 逐行解析 SSE 数据
                     async for line in response.content:
                         decoded_line = line.decode("utf-8").strip()
-                        
-                        if not decoded_line:
-                            continue
-                            
-                        # OpenAI 格式是以 "data: " 开头
+                        if not decoded_line or decoded_line == "data: [DONE]": continue
                         if decoded_line.startswith("data:"):
-                            data_str = decoded_line[5:].strip() # 去掉 "data:"
-                            
-                            if data_str == "[DONE]":
-                                break
-                                
                             try:
-                                data_json = json.loads(data_str)
-                                # 提取增量内容: choices[0].delta.content
+                                data_json = json.loads(decoded_line[5:])
+                                # 兼容 OpenAI 格式
                                 choices = data_json.get("choices", [])
                                 if choices:
-                                    delta = choices[0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    if content:
-                                        yield content
-                            except json.JSONDecodeError:
-                                continue
-                                
-            except aiohttp.ClientConnectorError:
-                raise Exception(f"无法连接到 vLLM 服务 ({self.base_url})，请确认服务已通过 'vllm serve' 启动。")
+                                    content = choices[0].get("delta", {}).get("content", "")
+                                    if content: yield content
+                            except: continue
+            except Exception as e:
+                raise Exception(f"流式请求失败: {e}")
 
     async def chat_completion(
         self, 
         messages: List[Dict[str, str]], 
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        **kwargs  # ✅ 新增：接收 response_format 等额外参数
     ) -> str:
-        """
-        非流式输出 (Stream=False)
-        """
         async with aiohttp.ClientSession() as session:
             model_name = await self._get_running_model(session)
             
@@ -128,23 +93,17 @@ class QwenService:
                 "max_tokens": self.default_params["max_tokens"],
                 "top_p": self.default_params["top_p"],
             }
+            # 同样忽略 kwargs 中的 response_format
 
             try:
-                async with session.post(
-                    f"{self.base_url}/v1/chat/completions",
-                    headers=self.headers,
-                    json=payload
-                ) as response:
+                async with session.post(f"{self.base_url}/v1/chat/completions", headers=self.headers, json=payload) as response:
                     await self._check_response_status(response)
-                    
                     data = await response.json()
-                    # 提取完整内容: choices[0].message.content
                     return data["choices"][0]["message"]["content"]
-                    
-            except aiohttp.ClientConnectorError:
-                raise Exception(f"无法连接到 vLLM 服务 ({self.base_url})，请确认服务已启动。")
+            except Exception as e:
+                raise Exception(f"请求失败: {e}")
 
     async def _check_response_status(self, response: aiohttp.ClientResponse) -> None:
         if response.status != 200:
             error_text = await response.text()
-            raise Exception(f"vLLM API 请求失败 (状态码 {response.status}): {error_text}")
+            raise Exception(f"API 错误 ({response.status}): {error_text}")

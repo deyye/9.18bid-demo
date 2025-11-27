@@ -131,7 +131,7 @@ export async function generateOutline(
     config: AppState['config']
 ): Promise<OutlineItem[]> {
     // 假设后端路由: /api/outline/generate
-    const response = await fetch(`${API_BASE_URL}/outline/generate`, {
+    const response = await fetch(`${API_BASE_URL}/outline`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
