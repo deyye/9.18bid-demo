@@ -31,8 +31,15 @@ export interface OutlineItem {
 export interface AppState {
   currentStep: ProcessStep;
   config: ConfigData;
-  documentContent: string; // 招标文件内容提取原文
-  analysisResult: string;  // AI 分析结果（关键信息、评分要求）
-  outline: OutlineItem[]; // 标书目录结构 (包含 wordCount)
-  generatedContent: { [key: string]: string }; // 生成的内容，key为章节ID
+  documentContent: string; 
+  
+  // 🔴 删除或弃用 analysisResult
+  // analysisResult: string; 
+
+  // 🟢 新增两个字段
+  overview: string;        // 项目概述
+  requirements: string;    // 技术评分要求
+  
+  outline: OutlineItem[]; 
+  generatedContent: { [key: string]: string }; 
 }

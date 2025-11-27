@@ -4,8 +4,8 @@ import { Card as AntCard } from 'antd';
 import { UploadOutlined, FileTextOutlined, SendOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { RcFile } from 'antd/es/upload';
 import useAppState from '../hooks/useAppState';
-import { uploadDocument, analyzeDocument } from '../services/api';
-import { ProcessStep } from '../types';
+import { uploadDocument, analyzeDocument, analyzeDocumentStream } from '../services/api';
+import { AppState, ProcessStep } from '../types';
 
 const { Title, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -87,17 +87,49 @@ const DocumentAnalysis: React.FC<DocumentAnalysisProps> = ({ onNext }) => {
         }
 
         setAnalyzing(true);
+        // 清空之前的结果
+        setState({ ...state, overview: '', requirements: '' });
+
         try {
-            message.info('AI 正在智能分析招标文件，提取关键信息和评分要求...');
+            message.info('AI 正在并行分析项目概述和技术要求...');
+
+            // 定义两个 Promise 同时执行
+            const task1 = analyzeDocumentStream(
+                state.documentContent,
+                'overview',
+                (chunk) => {
+                    // 实时更新 overview
+                    setState((prev: AppState) => ({
+                        ...prev,
+                        overview: (prev.overview || '') + chunk
+                    }));
+                },
+                (err) => message.error(`项目概述分析出错: ${err}`)
+            );
+
+            const task2 = analyzeDocumentStream(
+                state.documentContent,
+                'requirements',
+                (chunk) => {
+                    // 实时更新 requirements
+                    setState((prev: AppState) => ({
+                        ...prev,
+                        requirements: (prev.requirements || '') + chunk
+                    }));
+                },
+                (err) => message.error(`技术要求分析出错: ${err}`)
+            );
+
+            // 等待两个任务都完成（无论成功失败）
+            await Promise.allSettled([task1, task2]);
             
-            // 调用 api.ts 中的 analyzeDocument 函数
-            const result = await analyzeDocument(state.documentContent, state.config);
-            
-            setState({ analysisResult: result, currentStep: ProcessStep.DOCUMENT_ANALYSIS });
-            message.success('招标文件分析完成！');
+            message.success('文档双向分析完成！');
+            // 更新当前步骤状态
+            setState((prev: AppState) => ({ ...prev, currentStep: ProcessStep.DOCUMENT_ANALYSIS }));
+
         } catch (error: any) {
             console.error(error);
-            message.error(`文档分析失败: ${error.message || '未知错误'}`);
+            message.error('分析过程发生异常');
         } finally {
             setAnalyzing(false);
         }
@@ -105,10 +137,11 @@ const DocumentAnalysis: React.FC<DocumentAnalysisProps> = ({ onNext }) => {
     
     // 步骤 3: 下一步
     const handleNext = () => {
-        if (state.analysisResult) {
-            onNext(); // 导航到 OutlineEdit 页面
+        // 检查两个字段是否有内容
+        if (state.overview && state.requirements) {
+            onNext(); 
         } else {
-            message.warning('请先完成文档分析。');
+            message.warning('请等待分析完成（需包含项目概述和技术要求）。');
         }
     };
     
@@ -174,27 +207,42 @@ const DocumentAnalysis: React.FC<DocumentAnalysisProps> = ({ onNext }) => {
                     开始 AI 分析
                 </Button>
 
-                <Title level={4} style={{ marginTop: 24 }}>3. AI 分析结果（关键信息与评分要求）</Title>
-                <TextArea
-                    rows={5}
-                    placeholder="AI 提取的关键信息和技术评分要求将显示在这里..."
-                    value={state.analysisResult}
-                    readOnly
-                    style={{ marginBottom: 24 }}
-                />
-                
-                <div style={{ textAlign: 'right' }}>
-                    <Button 
-                        type="primary" 
-                        onClick={handleNext} 
-                        disabled={!isAnalysisDone} 
-                        icon={<SendOutlined />}
-                    >
-                        下一步：AI生成目录
-                    </Button>
+                <Title level={4} style={{ marginTop: 24 }}>3. AI 分析结果</Title>
+                <div style={{ display: 'flex', gap: '16px', marginBottom: 24 }}>
+                <div style={{ flex: 1 }}>
+                    <Title level={5}>项目概述 (Overview)</Title>
+                    <TextArea
+                        rows={10}
+                        placeholder="AI 正在生成项目概述..."
+                        value={state.overview} // 绑定 overview
+                        readOnly
+                        style={{ backgroundColor: '#fafafa', resize: 'none' }}
+                    />
                 </div>
-            </Spin>
-        </AntCard>
+                <div style={{ flex: 1 }}>
+                    <Title level={5}>技术评分要求 (Requirements)</Title>
+                    <TextArea
+                        rows={10}
+                        placeholder="AI 正在提取评分标准..."
+                        value={state.requirements} // 绑定 requirements
+                        readOnly
+                        style={{ backgroundColor: '#fafafa', resize: 'none' }}
+                    />
+                </div>
+            </div>
+            
+            <div style={{ textAlign: 'right' }}>
+                <Button 
+                    type="primary" 
+                    onClick={handleNext} 
+                    disabled={!state.overview || !state.requirements} 
+                    icon={<SendOutlined />}
+                >
+                    下一步：AI生成目录
+                </Button>
+            </div>
+        </Spin>
+    </AntCard>
     );
 };
 

@@ -88,18 +88,18 @@ export async function uploadDocument(file: File): Promise<DocumentUploadResponse
  * @returns 招标文件分析结果字符串。
  */
 export async function analyzeDocument(content: string, config: AppState['config']): Promise<string> {
-    // 假设后端路由: /api/document/analyze
-    const response = await fetch(`${API_BASE_URL}/document/analyze`, {
+    // ⚠️ 修正点 1：路径从 /analyze 改为 /analyze-stream
+    // ⚠️ 修正点 2：添加查询参数 ?stream=false，让后端一次性返回结果，不要流式传输
+    const response = await fetch(`${API_BASE_URL}/document/analyze-stream?stream=false`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
+        // ⚠️ 修正点 3：Body 结构必须匹配后端 AnalysisRequest 模型
+        // 后端要求字段: file_content, analysis_type
         body: JSON.stringify({ 
-            document_content: content, 
-            config: {
-                api_key: config.apiKey,
-                model_name: config.modelName,
-            }
+            file_content: content,           // 之前是 document_content，必须改为 file_content
+            analysis_type: "overview"        // 必须指定分析类型，可选 "overview" 或 "requirements"
         }),
     });
 
@@ -109,7 +109,8 @@ export async function analyzeDocument(content: string, config: AppState['config'
     }
 
     const data = await response.json();
-    return data.analysis_result || '未获取到分析结果'; // 假设返回 { analysis_result: '...' }
+    // ⚠️ 修正点 4：后端返回结构是 { result: "..." }，而不是 analysis_result
+    return data.result || '未获取到分析结果'; 
 }
 
 // ----------------------------------------------------
@@ -223,4 +224,67 @@ export async function exportToWord(generatedContent: { [key: string]: string }, 
     a.click();
     a.remove();
     window.URL.revokeObjectURL(url);
+}
+
+/**
+ * 流式分析文档
+ * @param content 文档内容
+ * @param analysisType 分析类型 ('overview' | 'requirements')
+ * @param onChunk 接收流式数据块的回调函数
+ * @param onError 错误回调
+ */
+export async function analyzeDocumentStream(
+    content: string,
+    analysisType: 'overview' | 'requirements',
+    onChunk: (chunk: string) => void,
+    onError: (error: string) => void
+): Promise<void> {
+    try {
+        // 1. 发起请求，开启 stream=true
+        const response = await fetch(`${API_BASE_URL}/document/analyze-stream?stream=true&use_qwen=true`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+                file_content: content,
+                analysis_type: analysisType 
+            }),
+        });
+
+        if (!response.ok) throw new Error(response.statusText);
+        if (!response.body) throw new Error("ReadableStream not supported");
+
+        // 2. 读取流
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            // 后端返回格式为: data: {"chunk": "..."}\n\n
+            // 我们需要按行分割并解析
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const jsonStr = line.slice(6); // 去掉 "data: "
+                    if (jsonStr.trim() === "[DONE]") continue; // 结束标识（如果有）
+                    try {
+                        const data = JSON.parse(jsonStr);
+                        // 如果有 chunk 字段，就回调出去
+                        if (data.chunk) {
+                            onChunk(data.chunk);
+                        }
+                    } catch (e) {
+                        console.warn("解析流数据失败", e);
+                    }
+                }
+            }
+        }
+    } catch (err: any) {
+        onError(err.message || "流式请求失败");
+    }
 }
