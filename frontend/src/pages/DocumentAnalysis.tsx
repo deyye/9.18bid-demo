@@ -59,7 +59,7 @@ const DocumentAnalysis: React.FC<DocumentAnalysisProps> = ({ onNext }) => {
             const response = await uploadDocument(file);
             
             // ⚠️ 关键假设：uploadDocument 成功后，后端返回了提取的文本内容
-            const extractedContent = response.documentContent || `[后端已成功保存文件，但未返回提取的文本内容]`;
+            const extractedContent = response.file_content || `[后端已成功保存文件，但未返回提取的文本内容]`;
             
             setUploadedFileId(response.fileId);
             setState({ documentContent: extractedContent });

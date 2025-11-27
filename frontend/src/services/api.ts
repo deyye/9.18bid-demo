@@ -12,11 +12,11 @@ interface ConfigPayload {
     apiKey: string;
 }
 
-// ⬇️ 修复编译错误：新增 documentContent 字段
+// ⬇️ 修复编译错误：新增 file_content 字段
 interface DocumentUploadResponse {
     fileId: string;
     fileName: string;
-    documentContent: string; // 新增字段，用于返回提取的文本内容
+    file_content: string; // 新增字段，用于返回提取的文本内容
 }
 
 // ----------------------------------------------------
