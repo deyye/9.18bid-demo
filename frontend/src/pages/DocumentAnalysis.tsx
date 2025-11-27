@@ -35,7 +35,8 @@ const DocumentAnalysis: React.FC<DocumentAnalysisProps> = ({ onNext }) => {
     const handleRemove = () => {
         setFileList([]);
         setUploadedFileId(null);
-        setState({ documentContent: '', analysisResult: '' });
+        
+        setState({ documentContent: '', overview: '', requirements: '' });
     };
 
     // 步骤 1: 上传文件并请求后端提取文本
@@ -50,7 +51,7 @@ const DocumentAnalysis: React.FC<DocumentAnalysisProps> = ({ onNext }) => {
         const file = fileList[0] as unknown as RcFile;
         
         // 清空旧的分析结果
-        setState({ documentContent: '', analysisResult: '' });
+        setState({ documentContent: '', overview: '', requirements: '' });
 
         try {
             message.info(`正在上传文件：${file.name} 并提取文本内容...`);

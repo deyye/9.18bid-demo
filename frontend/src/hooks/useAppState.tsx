@@ -6,20 +6,27 @@ import { AppState, ProcessStep } from '../types';
 const initialAppState: AppState = {
     currentStep: ProcessStep.DOCUMENT_ANALYSIS,
     documentContent: '',
-    analysisResult: '',
+    
+    // 🔴 删除: analysisResult: '', 
+    // 🟢 新增:
+    overview: '', 
+    requirements: '',
+
     outline: [],
     generatedContent: {},
     config: {
-        modelName: 'gpt-4o', // 默认模型
+        modelName: 'qwen3-14b',
         apiKey: '',
     },
 };
 
-// 1. 定义 Context 类型 (关键修改在这里)
+// 定义更新函数的类型：支持“部分对象”或“函数式更新”
+type StateUpdate = Partial<AppState> | ((prev: AppState) => Partial<AppState>);
+
+// 1. 定义 Context 类型
 interface AppContextType {
     state: AppState;
-    // ⬇️ 修复 TS2345 错误: 允许传入 Partial<AppState> 进行合并更新
-    setState: (update: Partial<AppState>) => void;
+    setState: (update: StateUpdate) => void;
 }
 
 // 2. 创建 Context
@@ -29,9 +36,14 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [state, setState] = useState<AppState>(initialAppState);
 
-    // ⬇️ 新增：实现状态合并逻辑
-    const mergeState = (update: Partial<AppState>) => {
-        setState(prevState => ({ ...prevState, ...update } as AppState));
+    // 2. 增强 setState：支持函数式更新 (对于流式追加内容至关重要)
+    const mergeState = (update: StateUpdate) => {
+        setState((prevState) => {
+            // 如果传入的是函数，则先执行函数获取部分更新数据
+            const partialUpdate = typeof update === 'function' ? update(prevState) : update;
+            // 合并状态
+            return { ...prevState, ...partialUpdate };
+        });
     };
 
     return (
