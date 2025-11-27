@@ -12,11 +12,15 @@ interface ConfigPayload {
     apiKey: string;
 }
 
-// ⬇️ 修复编译错误：新增 file_content 字段
-interface DocumentUploadResponse {
-    fileId: string;
-    fileName: string;
-    file_content: string; // 新增字段，用于返回提取的文本内容
+export interface DocumentUploadResponse {
+    success: boolean;       // 后端返回字段
+    message: string;        // 后端返回字段
+    file_content: string | null;   // ✅ 修正：必须改为 file_content
+    
+    // 注意：目前的后端代码 schemas.py 中并没有返回 fileId 和 fileName
+    // 如果后续流程不需要它们，可以忽略；如果需要，必须修改后端添加这些字段
+    fileId?: string;        
+    fileName?: string;
 }
 
 // ----------------------------------------------------
