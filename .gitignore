@@ -8,3 +8,4 @@
 /rag_storage/
 __pycache__/
 uploads
+backend/static/
