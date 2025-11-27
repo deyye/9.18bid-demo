@@ -1,106 +1,142 @@
 /**
  * 主应用组件
  */
-import React from 'react';
-import { useAppState } from './hooks/useAppState';
-import ConfigPanel from './components/ConfigPanel';
-import StepBar from './components/StepBar';
+import React, { useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Layout, Steps, Button, Drawer, message, Space } from 'antd';
+import { SettingOutlined, LeftOutlined } from '@ant-design/icons';
+import { AppState, ProcessStep } from './types';
+import useAppState from './hooks/useAppState';
 import DocumentAnalysis from './pages/DocumentAnalysis';
 import OutlineEdit from './pages/OutlineEdit';
 import ContentEdit from './pages/ContentEdit';
+import ConfigPanel from './components/ConfigPanel';
+import logo from './logo.svg';
+import { AppStateProvider } from './hooks/useAppState';
 
-function App() {
-  const {
-    state,
-    updateConfig,
-    updateStep,
-    updateFileContent,
-    updateAnalysisResults,
-    updateOutline,
-    updateSelectedChapter,
-    nextStep,
-    prevStep,
-  } = useAppState();
+const { Header, Content, Sider } = Layout;
 
-  const steps = ['标书解析', '目录编辑', '正文编辑'];
+// 流程步骤定义 (替代 StepBar.tsx)
+const stepItems = [
+    { title: '智能文档解析', description: '上传并分析招标文件' },
+    { title: 'AI生成目录', description: '编辑并设置章节字数' },
+    { title: '内容自动生成', description: '编辑和优化内容' },
+    { title: '一键导出', description: 'Word 文档导出' },
+];
 
-  const renderCurrentPage = () => {
-    switch (state.currentStep) {
-      case 0:
-        return (
-          <DocumentAnalysis
-            fileContent={state.fileContent}
-            projectOverview={state.projectOverview}
-            techRequirements={state.techRequirements}
-            onFileUpload={updateFileContent}
-            onAnalysisComplete={updateAnalysisResults}
-          />
-        );
-      case 1:
-        return (
-          <OutlineEdit
-            projectOverview={state.projectOverview}
-            techRequirements={state.techRequirements}
-            outlineData={state.outlineData}
-            onOutlineGenerated={updateOutline}
-          />
-        );
-      case 2:
-        return (
-          <ContentEdit
-            outlineData={state.outlineData}
-            selectedChapter={state.selectedChapter}
-            onChapterSelect={updateSelectedChapter}
-          />
-        );
-      default:
-        return null;
-    }
-  };
+// 主应用逻辑
+const MainApp: React.FC = () => {
+    const { state, setState } = useAppState();
+    const navigate = useNavigate();
+    const location = useLocation();
+    
+    const [configDrawerVisible, setConfigDrawerVisible] = useState(false); // 优化点 4: 抽屉可见性
+    
+    // 自动判断当前步骤
+    const currentStepIndex = stepItems.findIndex(item => location.pathname.includes(item.title.toLowerCase().replace(/ /g, '')));
+    const currentStep = currentStepIndex !== -1 ? currentStepIndex : 0;
+    
+    // 流程导航处理
+    const handleStepChange = (step: ProcessStep) => {
+        // ... (在这里添加流程控制和数据校验逻辑)
+        let path = '/';
+        switch (step) {
+            case ProcessStep.DOCUMENT_ANALYSIS: path = '/analysis'; break;
+            case ProcessStep.OUTLINE_EDIT: path = '/outline'; break;
+            case ProcessStep.CONTENT_GENERATE: path = '/content'; break;
+            default: path = '/analysis'; break;
+        }
+        setState({ currentStep: step });
+        navigate(path);
+    };
 
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      {/* 左侧配置面板 */}
-      <ConfigPanel
-        config={state.config}
-        onConfigChange={updateConfig}
-      />
+    // 导出 Word 逻辑
+    const handleExport = () => {
+        message.info('正在请求后端生成 Word 文档...');
+        // 实际调用导出 API
+        // exportToWord(state.generatedContent).then(...)
+    };
 
-      {/* 主内容区域 */}
-      <div className="flex-1 flex flex-col">
-        {/* 步骤导航 */}
-        <div className="bg-white shadow-sm px-6">
-          <StepBar steps={steps} currentStep={state.currentStep} />
-        </div>
+    return (
+        // 优化点 3: 采用 Ant Design Layout 布局
+        <Layout style={{ minHeight: '100vh' }}>
+            <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f0f0f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <img src={logo} alt="Logo" style={{ height: 32, marginRight: 12 }} />
+                    <h1 style={{ margin: 0, fontSize: '20px', color: '#1890ff' }}>智能标书写作助手</h1>
+                </div>
+                {/* 顶部右侧操作 */}
+                <Space>
+                    {/* 优化点 5: 导出按钮移到顶部 */}
+                    <Button 
+                        type="primary" 
+                        onClick={handleExport} 
+                        disabled={currentStep < ProcessStep.CONTENT_GENERATE}
+                    >
+                        一键导出 Word
+                    </Button>
+                    {/* 优化点 4: 个性化定制入口（抽屉） */}
+                    <Button 
+                        icon={<SettingOutlined />} 
+                        onClick={() => setConfigDrawerVisible(true)}
+                        title="个性化定制"
+                    >
+                        配置
+                    </Button>
+                </Space>
+            </Header>
 
-        {/* 页面内容 */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          {renderCurrentPage()}
-        </div>
+            <Layout>
+                {/* 侧边栏：步骤导航 */}
+                <Sider width={250} style={{ background: '#fff', borderRight: '1px solid #f0f0f0', padding: '24px 16px' }}>
+                    {/* 优化点 5: 使用 Ant Design Steps 替代 StepBar */}
+                    <Steps
+                        direction="vertical"
+                        current={currentStep}
+                        items={stepItems}
+                        onChange={(idx) => handleStepChange(idx as ProcessStep)}
+                    />
+                </Sider>
 
-        {/* 底部导航按钮 */}
-        <div className="bg-white border-t border-gray-200 px-6 py-4">
-          <div className="flex justify-between">
-            <button
-              onClick={prevStep}
-              disabled={state.currentStep === 0}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                {/* 主内容区域 */}
+                <Content style={{ padding: 24, background: '#f5f5f5' }}>
+                    <Routes>
+                        <Route path="/" element={<DocumentAnalysis onNext={() => handleStepChange(ProcessStep.OUTLINE_EDIT)} />} />
+                        <Route path="/analysis" element={<DocumentAnalysis onNext={() => handleStepChange(ProcessStep.OUTLINE_EDIT)} />} />
+                        <Route path="/outline" element={<OutlineEdit onNext={() => handleStepChange(ProcessStep.CONTENT_GENERATE)} />} />
+                        <Route path="/content" element={<ContentEdit onNext={() => handleStepChange(ProcessStep.EXPORT)} />} />
+                    </Routes>
+                </Content>
+            </Layout>
+
+            {/* 优化点 4: 个性化定制抽屉 */}
+            <Drawer
+                title="个性化定制 AI 模型"
+                placement="right"
+                onClose={() => setConfigDrawerVisible(false)}
+                open={configDrawerVisible}
+                width={400}
+                footer={
+                    <div style={{ textAlign: 'right' }}>
+                        <Button onClick={() => setConfigDrawerVisible(false)} style={{ marginRight: 8 }}>
+                            关闭
+                        </Button>
+                    </div>
+                }
             >
-              上一步
-            </button>
+                <ConfigPanel />
+            </Drawer>
+        </Layout>
+    );
+};
 
-            <button
-              onClick={nextStep}
-              disabled={state.currentStep === steps.length - 1}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
-            >
-              下一步
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const RootApp: React.FC = () => (
+    <Router>
+        {/* 核心修改：使用 AppStateProvider 包装整个应用 */}
+        <AppStateProvider>
+            <MainApp />
+        </AppStateProvider>
+    </Router>
+);
 
-export default App;
+export default RootApp;

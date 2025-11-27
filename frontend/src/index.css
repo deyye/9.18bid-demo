@@ -1,9 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* -------------------------------------------
+ * 全局基础样式和 Ant Design 覆盖
+ * ------------------------------------------- */
 
 body {
   margin: 0;
+  /* Ant Design 默认字体，确保应用风格统一 */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
@@ -11,7 +12,61 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* 覆盖 Ant Design Layout 的默认背景色，确保 Content 区域有对比 */
+.ant-layout-header {
+    /* 顶部 Header */
+    height: 64px;
+    line-height: 64px;
 }
+
+/* -------------------------------------------
+ * 优化点 2: 类似 Word 的布局样式 (用于 ContentEdit.tsx)
+ * ------------------------------------------- */
+
+/* 外部容器：实现滚动，让用户可以上下翻页 */
+.editor-wrapper {
+    display: flex;
+    justify-content: center;
+    /* 计算高度：视口高度减去顶部 Header (64px) 和上下 padding (20px*2) */
+    height: calc(100vh - 120px); 
+    overflow-y: scroll;
+    padding: 20px 0;
+    /* 确保背景与纸张背景有区分 */
+    background-color: #f5f5f5; 
+}
+
+/* A4 纸张模拟：实现 Word 布局的核心样式 */
+.word-paper {
+    /* A4 尺寸近似值：794px x 1123px (96 DPI) */
+    width: 794px; 
+    min-height: 1123px; /* 最小高度确保 A4 比例，内容多时可扩展 */
+    
+    background-color: white; /* 白色背景 */
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.15); /* 纸张阴影效果 */
+    margin: 0 auto; /* 居中 */
+    padding: 96px 72px; /* 模拟页边距，例如 1 英寸/0.75 英寸 */
+    
+    /* 确保内容区域文字样式与专业标书相近 */
+    font-family: 'SimSun', 'Arial', 'Microsoft YaHei', sans-serif; /* 常用宋体或微软雅黑 */
+    line-height: 1.6; /* 舒适的行高 */
+    transition: box-shadow 0.3s;
+}
+
+.word-paper:hover {
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.25);
+}
+
+/* 富文本编辑区域的默认样式重置，确保编辑体验接近 Word */
+.word-paper [contenteditable="true"] {
+    min-height: 800px; 
+    padding: 10px;
+    border: none; /* 内部编辑区不再需要边框 */
+    background-color: transparent;
+    outline: none; /* 移除点击时的蓝色外框 */
+}
+
+/* 富文本内的标题样式 (注意：某些构建环境可能需要 postcss 或类似的工具来处理嵌套 CSS) */
+/* 为了兼容性，建议将 h1, h2, h3 的样式也平铺在顶层，如下： */
+.word-paper h1 { font-size: 24px; margin-top: 1.5em; margin-bottom: 0.5em; }
+.word-paper h2 { font-size: 20px; margin-top: 1.2em; margin-bottom: 0.5em; }
+.word-paper h3 { font-size: 16px; margin-top: 1em; margin-bottom: 0.5em; }

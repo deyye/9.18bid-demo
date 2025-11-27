@@ -49,7 +49,7 @@ async def generate_content_stream(request: ContentGenerationRequest, use_qwen: b
 
         messages = [
             {"role": "system", "content": "你是一名专业的内容生成助手，负责根据大纲生成项目文档。"},
-            {"role": "user", "content": f"项目概述：{request.project_overview}\n\n目录大纲：{request.outline}\n\n请以投标单位的角度，逐条生成内容。"}
+            {"role": "user", "content": f"项目概述：{request.project_overview}\n\n目录大纲：{request.outline}\n\n请以投标单位的角度，逐条生成内容。章节内容不少于30000字。"}
         ]
 
         if stream:

@@ -22,7 +22,7 @@ app = FastAPI(title="Qwen Local Model Server")
 MODEL_PATH = "/root/.cache/modelscope/hub/models/Qwen/Qwen3-14B"
 TENSOR_PARALLEL_SIZE = 2  # GPU数量
 GPU_MEMORY_UTILIZATION = 0.8  # GPU内存利用率
-MAX_TOKENS = 32768  # 最大上下文长度
+MAX_TOKENS = 32768*4  # 最大上下文长度
 
 # 加载tokenizer
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
@@ -37,14 +37,14 @@ engine_args = AsyncEngineArgs(
     max_num_batched_tokens=32768,  # 批量处理的总Token上限
     
     # # # YARN RoPE 缩放配置
-    # rope_scaling={
-    #     "rope_type": "yarn",          
-    #     "factor": 4.0,               
-    #     "original_max_position_embeddings": 32768  
-    # },
+    rope_scaling={
+        "rope_type": "yarn",          
+        "factor": 4.0,               
+        "original_max_position_embeddings": 32768  
+    },
     
     # # # 扩展后的模型最大上下文长度
-    # max_model_len=131072  # 32768 × 4 = 131072
+    max_model_len=131072  # 32768 × 4 = 131072
 )
 llm_engine = AsyncLLMEngine.from_engine_args(engine_args)
 
@@ -146,7 +146,7 @@ class QwenService:
         )
     
     async def generate(self, prompt: str, system_prompt: str = "", 
-                      temperature: float = 0.6, max_tokens: int = 131072,
+                      temperature: float = 0.6, max_tokens: int = MAX_TOKENS,
                       top_p: float = 0.95, top_k: int = 20) -> GenerateResponse:
         """非流式生成（原功能保留，扩展system_prompt默认值）"""
         request_id = random_uuid()
@@ -183,7 +183,7 @@ class QwenService:
         )
     
     async def generate_stream(self, prompt: str, system_prompt: str = "",
-                             temperature: float = 0.6, max_tokens: int = 131072,
+                             temperature: float = 0.6, max_tokens: int = MAX_TOKENS,
                              top_p: float = 0.95, top_k: int = 20) -> AsyncGenerator[str, None]:
         """流式生成（原功能保留，扩展system_prompt默认值）"""
         request_id = random_uuid()

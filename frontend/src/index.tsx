@@ -1,19 +1,32 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './index.css';
+import { ConfigProvider, App as AntdApp } from 'antd'; 
 import App from './App';
-import reportWebVitals from './reportWebVitals';
+import './index.css'; // ⬇️ 正确的导入 CSS 方式！
+import reportWebVitals from './reportWebVitals'; // 假设您有这个文件
 
-const root = ReactDOM.createRoot(
-  document.getElementById('root') as HTMLElement
-);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+// 使用 React 18 的创建根节点 API
+const rootElement = document.getElementById('root');
 
-// If you want to start measuring performance in your app, pass a function
-// to log results (for example: reportWebVitals(console.log))
-// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
+if (rootElement) {
+    ReactDOM.createRoot(rootElement).render(
+        <React.StrictMode>
+            {/* 1. 使用 ConfigProvider 进行主题配置 */}
+            <ConfigProvider
+                theme={{
+                    token: {
+                        colorPrimary: '#1890ff', // Ant Design 主题色
+                    },
+                }}
+            >
+                {/* 2. 使用 AntdApp 包裹，以便全局使用 message/notification/modal */}
+                <AntdApp>
+                    <App />
+                </AntdApp>
+            </ConfigProvider>
+        </React.StrictMode>
+    );
+}
+
+// 报告性能指标
 reportWebVitals();

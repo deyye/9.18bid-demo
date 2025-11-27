@@ -1,4 +1,10 @@
 /backend/all-in-rag/
+/backend/rag_anything/
+/backend/rag/
 /DeepSeek-OCR/
 /LangGraph-Chatchat/
 交易招标文件.pdf
+/node_modules/
+/rag_storage/
+/uploads/
+__pycache__/

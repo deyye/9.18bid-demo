@@ -1,145 +1,222 @@
+import { AppState, OutlineItem } from '../types';
+
+// API 基础路径
+const API_BASE_URL = 'http://localhost:8000/api'; 
+
+// ----------------------------------------------------
+// 辅助类型定义
+// ----------------------------------------------------
+
+interface ConfigPayload {
+    modelName: string;
+    apiKey: string;
+}
+
+// ⬇️ 修复编译错误：新增 documentContent 字段
+interface DocumentUploadResponse {
+    fileId: string;
+    fileName: string;
+    documentContent: string; // 新增字段，用于返回提取的文本内容
+}
+
+// ----------------------------------------------------
+// 1. 配置相关 API
+// ----------------------------------------------------
+
 /**
- * API服务
+ * @function saveConfig
+ * @description 异步保存 AI 模型配置和 Key 到后端。
  */
-import axios from 'axios';
+export async function saveConfig(configPayload: ConfigPayload): Promise<void> {
+    // 假设后端路由: /api/config/update
+    const response = await fetch(`${API_BASE_URL}/config/update`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            // 假设后端配置结构为 api_key, model_name
+            api_key: configPayload.apiKey,
+            model_name: configPayload.modelName,
+        }),
+    });
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000,
-});
-
-// 响应拦截器
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    console.error('API请求错误:', error);
-    return Promise.reject(error);
-  }
-);
-
-export interface ConfigData {
-  api_key: string;
-  base_url?: string;
-  model_name: string;
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '保存配置失败');
+    }
 }
 
-export interface FileUploadResponse {
-  success: boolean;
-  message: string;
-  file_content?: string;
-}
+// ----------------------------------------------------
+// 2. 文档解析 API
+// ----------------------------------------------------
 
-export interface AnalysisRequest {
-  file_content: string;
-  analysis_type: 'overview' | 'requirements';
-}
-
-export interface OutlineRequest {
-  overview: string;
-  requirements: string;
-}
-
-export interface ContentGenerationRequest {
-  outline: { outline: any[] };
-  project_overview: string;
-}
-
-export interface ChapterContentRequest {
-  chapter: any;
-  parent_chapters?: any[];
-  sibling_chapters?: any[];
-  project_overview: string;
-}
-
-// 配置相关API
-export const configApi = {
-  // 保存配置
-  saveConfig: (config: ConfigData) =>
-    api.post('/api/config/save', config),
-
-  // 加载配置
-  loadConfig: () =>
-    api.get('/api/config/load'),
-
-  // 获取可用模型
-  getModels: (config: ConfigData) =>
-    api.post('/api/config/models', config),
-};
-
-// 文档相关API
-export const documentApi = {
-  // 上传文件
-  uploadFile: (file: File) => {
+/**
+ * @function uploadDocument
+ * @description 上传招标文件到后端。
+ * @param file - 待上传的 File 对象。
+ * @returns 包含文件ID、文件名和提取的文本内容的响应。
+ */
+export async function uploadDocument(file: File): Promise<DocumentUploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post<FileUploadResponse>('/api/document/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+    
+    // 假设后端路由: /api/document/upload
+    const response = await fetch(`${API_BASE_URL}/document/upload`, {
+        method: 'POST',
+        body: formData,
     });
-  },
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '文件上传失败');
+    }
+    
+    // 假设后端返回 { fileId: '...', fileName: '...', documentContent: '...' }
+    return await response.json(); 
+}
+
+/**
+ * @function analyzeDocument
+ * @description 请求后端 AI 分析招标文件内容，提取关键信息。
+ * @param content - 原始内容。
+ * @param config - 当前的 AI 配置。
+ * @returns 招标文件分析结果字符串。
+ */
+export async function analyzeDocument(content: string, config: AppState['config']): Promise<string> {
+    // 假设后端路由: /api/document/analyze
+    const response = await fetch(`${API_BASE_URL}/document/analyze`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            document_content: content, 
+            config: {
+                api_key: config.apiKey,
+                model_name: config.modelName,
+            }
+        }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '文档分析失败');
+    }
+
+    const data = await response.json();
+    return data.analysis_result || '未获取到分析结果'; // 假设返回 { analysis_result: '...' }
+}
+
+// ----------------------------------------------------
+// 3. 目录生成 API
+// ----------------------------------------------------
+
+/**
+ * @function generateOutline
+ * @description 根据招标文件分析结果，请求后端 AI 生成标书目录。
+ * @param analysisResult - 招标文件分析结果。
+ * @param config - 当前的 AI 配置。
+ * @returns 标书目录结构 OutlineItem[]。
+ */
+export async function generateOutline(analysisResult: string, config: AppState['config']): Promise<OutlineItem[]> {
+    // 假设后端路由: /api/outline/generate
+    const response = await fetch(`${API_BASE_URL}/outline/generate`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            analysis_result: analysisResult, 
+            config: {
+                api_key: config.apiKey,
+                model_name: config.modelName,
+            }
+        }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '生成目录失败');
+    }
+
+    const data = await response.json();
+    return data.outline || []; // 假设后端返回 { outline: [...] }
+}
 
 
-  // 流式分析文档
-  analyzeDocumentStream: (data: AnalysisRequest) =>
-    fetch(`${API_BASE_URL}/api/document/analyze-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    }),
-};
+// ----------------------------------------------------
+// 4. 内容生成 API
+// ----------------------------------------------------
 
-// 目录相关API
-export const outlineApi = {
-  // 生成目录
-  generateOutline: (data: OutlineRequest) =>
-    api.post('/api/outline/generate', data),
+/**
+ * @function generateContent
+ * @description 根据完整大纲（包含字数设定）请求后端 AI 生成所有章节内容。
+ * @returns 包含所有章节内容的字典 { chapterId: content }。
+ */
+export async function generateContent(
+    documentContent: string,
+    analysisResult: string,
+    outline: OutlineItem[],
+    config: AppState['config']
+): Promise<{ [key: string]: string }> {
+    // 假设后端路由: /api/content/generate
+    const response = await fetch(`${API_BASE_URL}/content/generate`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            document_content: documentContent,
+            analysis_result: analysisResult,
+            outline: outline, 
+            config: {
+                api_key: config.apiKey,
+                model_name: config.modelName,
+            }
+        }),
+    });
 
-  // 流式生成目录
-  generateOutlineStream: (data: OutlineRequest) =>
-    fetch(`${API_BASE_URL}/api/outline/generate-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    }),
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '内容生成失败');
+    }
 
-};
+    return await response.json(); // 假设后端返回 { chapterId: content, ... }
+}
 
-// 内容相关API
-export const contentApi = {
-  // 生成内容
-  generateContent: (data: ContentGenerationRequest) =>
-    api.post('/api/content/generate', data),
 
-  // 流式生成内容
-  generateContentStream: (data: ContentGenerationRequest) =>
-    fetch(`${API_BASE_URL}/api/content/generate-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    }),
+// ----------------------------------------------------
+// 5. 导出 API
+// ----------------------------------------------------
 
-  // 生成单章节内容
-  generateChapterContent: (data: ChapterContentRequest) =>
-    api.post('/api/content/generate-chapter', data),
+/**
+ * @function exportToWord
+ * @description 请求后端将所有内容打包导出为 Word 文档 (.docx)。
+ */
+export async function exportToWord(generatedContent: { [key: string]: string }, outline: OutlineItem[]): Promise<void> {
+    // 假设后端路由: /api/document/export
+    const response = await fetch(`${API_BASE_URL}/document/export`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content: generatedContent, outline: outline }),
+    });
 
-  // 流式生成单章节内容
-  generateChapterContentStream: (data: ChapterContentRequest) =>
-    fetch(`${API_BASE_URL}/api/content/generate-chapter-stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    }),
-};
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '导出 Word 失败');
+    }
 
-export default api;
+    // 处理文件流下载
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '智能标书.docx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+}

@@ -1,38 +1,135 @@
-.App {
-  text-align: center;
-}
+import React, { useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Layout, Steps, Button, Drawer, message, Space } from 'antd';
+import { SettingOutlined, LeftOutlined } from '@ant-design/icons';
+import { AppState, ProcessStep } from './types';
+import useAppState from './hooks/useAppState';
+import DocumentAnalysis from './pages/DocumentAnalysis';
+import OutlineEdit from './pages/OutlineEdit';
+import ContentEdit from './pages/ContentEdit';
+import ConfigPanel from './components/ConfigPanel';
+import logo from './logo.svg';
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
+const { Header, Content, Sider } = Layout;
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
+// 流程步骤定义 (替代 StepBar.tsx)
+const stepItems = [
+    { title: '智能文档解析', description: '上传并分析招标文件' },
+    { title: 'AI生成目录', description: '编辑并设置章节字数' },
+    { title: '内容自动生成', description: '编辑和优化内容' },
+    { title: '一键导出', description: 'Word 文档导出' },
+];
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
-}
+// 主应用逻辑
+const MainApp: React.FC = () => {
+    const { state, setState } = useAppState();
+    const navigate = useNavigate();
+    const location = useLocation();
+    
+    const [configDrawerVisible, setConfigDrawerVisible] = useState(false); // 优化点 4: 抽屉可见性
+    
+    // 自动判断当前步骤
+    const currentStepIndex = stepItems.findIndex(item => location.pathname.includes(item.title.toLowerCase().replace(/ /g, '')));
+    const currentStep = currentStepIndex !== -1 ? currentStepIndex : 0;
+    
+    // 流程导航处理
+    const handleStepChange = (step: ProcessStep) => {
+        // ... (在这里添加流程控制和数据校验逻辑)
+        let path = '/';
+        switch (step) {
+            case ProcessStep.DOCUMENT_ANALYSIS: path = '/analysis'; break;
+            case ProcessStep.OUTLINE_EDIT: path = '/outline'; break;
+            case ProcessStep.CONTENT_GENERATE: path = '/content'; break;
+            default: path = '/analysis'; break;
+        }
+        setState({ currentStep: step });
+        navigate(path);
+    };
 
-.App-link {
-  color: #61dafb;
-}
+    // 导出 Word 逻辑
+    const handleExport = () => {
+        message.info('正在请求后端生成 Word 文档...');
+        // 实际调用导出 API
+        // exportToWord(state.generatedContent).then(...)
+    };
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
+    return (
+        // 优化点 3: 采用 Ant Design Layout 布局
+        <Layout style={{ minHeight: '100vh' }}>
+            <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f0f0f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <img src={logo} alt="Logo" style={{ height: 32, marginRight: 12 }} />
+                    <h1 style={{ margin: 0, fontSize: '20px', color: '#1890ff' }}>智能标书写作助手</h1>
+                </div>
+                {/* 顶部右侧操作 */}
+                <Space>
+                    {/* 优化点 5: 导出按钮移到顶部 */}
+                    <Button 
+                        type="primary" 
+                        onClick={handleExport} 
+                        disabled={currentStep < ProcessStep.CONTENT_GENERATE}
+                    >
+                        一键导出 Word
+                    </Button>
+                    {/* 优化点 4: 个性化定制入口（抽屉） */}
+                    <Button 
+                        icon={<SettingOutlined />} 
+                        onClick={() => setConfigDrawerVisible(true)}
+                        title="个性化定制"
+                    >
+                        配置
+                    </Button>
+                </Space>
+            </Header>
+
+            <Layout>
+                {/* 侧边栏：步骤导航 */}
+                <Sider width={250} style={{ background: '#fff', borderRight: '1px solid #f0f0f0', padding: '24px 16px' }}>
+                    {/* 优化点 5: 使用 Ant Design Steps 替代 StepBar */}
+                    <Steps
+                        direction="vertical"
+                        current={currentStep}
+                        items={stepItems}
+                        onChange={(idx) => handleStepChange(idx as ProcessStep)}
+                    />
+                </Sider>
+
+                {/* 主内容区域 */}
+                <Content style={{ padding: 24, background: '#f5f5f5' }}>
+                    <Routes>
+                        <Route path="/" element={<DocumentAnalysis onNext={() => handleStepChange(ProcessStep.OUTLINE_EDIT)} />} />
+                        <Route path="/analysis" element={<DocumentAnalysis onNext={() => handleStepChange(ProcessStep.OUTLINE_EDIT)} />} />
+                        <Route path="/outline" element={<OutlineEdit onNext={() => handleStepChange(ProcessStep.CONTENT_GENERATE)} />} />
+                        <Route path="/content" element={<ContentEdit onNext={() => handleStepChange(ProcessStep.EXPORT)} />} />
+                    </Routes>
+                </Content>
+            </Layout>
+
+            {/* 优化点 4: 个性化定制抽屉 */}
+            <Drawer
+                title="个性化定制 AI 模型"
+                placement="right"
+                onClose={() => setConfigDrawerVisible(false)}
+                visible={configDrawerVisible}
+                width={400}
+                footer={
+                    <div style={{ textAlign: 'right' }}>
+                        <Button onClick={() => setConfigDrawerVisible(false)} style={{ marginRight: 8 }}>
+                            关闭
+                        </Button>
+                    </div>
+                }
+            >
+                <ConfigPanel />
+            </Drawer>
+        </Layout>
+    );
+};
+
+const RootApp: React.FC = () => (
+    <Router>
+        <MainApp />
+    </Router>
+);
+
+export default RootApp;

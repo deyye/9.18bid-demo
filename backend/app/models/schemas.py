@@ -92,3 +92,25 @@ class AnalysisResponse(BaseModel):
     success: bool
     message: str
     result: str
+
+class OutlineItemSchema(BaseModel):
+    id: str
+    level: int
+    title: str
+    # 优化点 1: 新增 word_count 字段，用于接收前端设定的章节字数
+    word_count: Optional[int] = None 
+    children: Optional[List['OutlineItemSchema']] = None
+    
+    class Config:
+        orm_mode = True
+        # 允许内部递归引用
+        arbitrary_types_allowed = True
+        # ⬇️ 修复 NameError：移除在类定义期间引用自身的 json_encoders
+        # json_encoders = {
+        #     OutlineItemSchema: lambda v: v.dict(exclude_none=True)
+        # }
+
+OutlineItemSchema.update_forward_refs()
+
+class OutlineListSchema(BaseModel):
+    outline: List[OutlineItemSchema]
