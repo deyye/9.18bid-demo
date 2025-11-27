@@ -133,3 +133,18 @@ const RootApp: React.FC = () => (
 );
 
 export default RootApp;
+
+/* frontend/src/App.css */
+.ant-tree-node-content-wrapper .anticon {
+    margin-left: 8px;
+}
+
+/* 简单的 hover 显示逻辑 */
+.ant-tree-treenode .ant-space-item .ant-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.ant-tree-treenode:hover .ant-space-item .ant-btn {
+    opacity: 1;
+}
