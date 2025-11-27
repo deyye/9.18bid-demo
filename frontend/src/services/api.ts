@@ -130,16 +130,17 @@ export async function generateOutline(
     requirements: string, 
     config: AppState['config']
 ): Promise<OutlineItem[]> {
-    // 假设后端路由: /api/outline/generate
-    const response = await fetch(`${API_BASE_URL}/outline`, {
+    // ✅ 修正点：路径必须加上 /generate，与后端 router.post("/generate") 对应
+    const response = await fetch(`${API_BASE_URL}/outline/generate`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        // ✅ 修正：请求体必须匹配后端 OutlineRequest (overview, requirements)
         body: JSON.stringify({ 
             overview: overview, 
             requirements: requirements,
+            // 注意：后端 OutlineRequest 模型其实只定义了 overview 和 requirements
+            // 传入 config 通常会被 Pydantic 忽略（不会报错），但为了严谨，确保后端能处理或忽略它
             config: {
                 api_key: config.apiKey,
                 model_name: config.modelName,
@@ -149,10 +150,12 @@ export async function generateOutline(
 
     if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || '生成目录失败');
+        // 增加更详细的错误提示，方便调试
+        throw new Error(errorData.detail || `生成目录失败 (${response.status})`);
     }
 
     const data = await response.json();
+    // 后端返回的是 OutlineResponse(outline=[...])，所以这里取 data.outline
     return data.outline || []; 
 }
 
