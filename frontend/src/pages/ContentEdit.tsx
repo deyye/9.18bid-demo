@@ -1,42 +1,118 @@
-import React, { useState } from 'react';
-import { Button, Card, Select, message, Spin, Typography, Layout as AntdLayout, Tooltip } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Button, Select, message, Spin, Typography, Layout as AntdLayout, Space, Empty } from 'antd';
+import { FileWordOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons';
 import useAppState from '../hooks/useAppState';
-import { generateContent, exportToWord } from '../services/api';
-import { FileWordOutlined, ReloadOutlined } from '@ant-design/icons';
-// 假设引入了一个轻量级的富文本编辑器，这里使用TextArea模拟，并应用A4样式
+import { exportToWord } from '../services/api';
+// 引入 ReactQuill 及样式
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
-const { Title, Paragraph } = Typography;
+// 🟢 关键修复：创建一个避开类型检查的 Quill 包装器
+// 这里使用 'as any' 彻底解决 "JSX element class does not support attributes" 报错
+const QuillWrapper = ReactQuill as any;
+
+const { Title, Text } = Typography;
 const { Content } = AntdLayout;
 
 interface ContentEditProps {
     onNext: () => void;
 }
 
+// --- 自定义样式：模拟 A4 纸张和 Word 风格 ---
+const editorStyles = `
+    /* 整体背景 */
+    .editor-layout {
+        background-color: #f0f2f5;
+        min-height: 100vh;
+    }
+
+    /* A4 纸张容器 */
+    .a4-paper-container {
+        width: 210mm; /* A4 宽度 */
+        min-height: 297mm; /* A4 高度 */
+        margin: 24px auto;
+        background: white;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        padding: 0; /* 内边距由 Quill 内部控制 */
+        position: relative;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* Quill 编辑器定制 */
+    .quill-editor {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* 工具栏吸顶效果 */
+    .ql-toolbar.ql-snow {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: #f8f9fa;
+        border: none !important;
+        border-bottom: 1px solid #ddd !important;
+        padding: 12px 8px !important;
+        text-align: center;
+    }
+
+    /* 编辑区域 */
+    .ql-container.ql-snow {
+        border: none !important;
+        flex: 1;
+        font-family: 'Songti SC', 'SimSun', serif; /* 宋体更像标书 */
+        font-size: 16px;
+    }
+
+    .ql-editor {
+        padding: 25.4mm 31.8mm; /* 标准公文页边距：上下2.54cm，左右3.18cm */
+        line-height: 1.8; /* 宽松行高 */
+        min-height: 250mm;
+    }
+
+    /* 标题样式增强 */
+    .ql-editor h1 { font-size: 24px; font-weight: bold; margin-bottom: 16px; }
+    .ql-editor h2 { font-size: 20px; font-weight: bold; margin-top: 12px; margin-bottom: 12px; }
+    .ql-editor h3 { font-size: 18px; font-weight: bold; }
+    .ql-editor p { margin-bottom: 8px; text-indent: 2em; } /* 首行缩进 */
+`;
+
+// --- Quill 工具栏配置 ---
+const modules = {
+    toolbar: [
+        [{ 'header': [1, 2, 3, false] }],
+        ['bold', 'italic', 'underline', 'strike'],        // 字体样式
+        [{ 'color': [] }, { 'background': [] }],          // 颜色
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],     // 列表
+        [{ 'indent': '-1'}, { 'indent': '+1' }],          // 缩进
+        [{ 'align': [] }],                                // 对齐
+        ['clean']                                         // 清除格式
+    ],
+};
+
+const formats = [
+    'header',
+    'bold', 'italic', 'underline', 'strike',
+    'color', 'background',
+    'list', 'bullet', 'indent',
+    'align'
+];
+
 const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
     const { state, setState } = useAppState();
     const [loading, setLoading] = useState(false);
     const [selectedChapterId, setSelectedChapterId] = useState<string | undefined>(undefined);
     
-    // 假设当前编辑的内容是 state.generatedContent[selectedChapterId]
-    const currentContent = selectedChapterId ? state.generatedContent[selectedChapterId] : '';
-
-    // 优化点 2: 模拟富文本编辑器的内容更新
-    const handleContentChange = (newContent: string) => {
-        if (selectedChapterId) {
-            setState({ 
-                generatedContent: { 
-                    ...state.generatedContent, 
-                    [selectedChapterId]: newContent 
-                } 
-            });
-        }
-    };
+    // 获取当前章节内容（如果没有则为空字符串）
+    const currentContent = selectedChapterId ? (state.generatedContent[selectedChapterId] || '') : '';
 
     // 递归获取所有章节选项
     const getAllChapters = (outline: any[], level = 0): { value: string; label: string }[] => {
         let chapters: { value: string; label: string }[] = [];
         outline.forEach((item) => {
-            const prefix = '— '.repeat(level);
+            const prefix = '\u00A0\u00A0'.repeat(level * 2); // 使用空格缩进显示层级
             chapters.push({ value: item.id, label: `${prefix}${item.title}` });
             if (item.children) {
                 chapters = chapters.concat(getAllChapters(item.children, level + 1));
@@ -47,119 +123,129 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
 
     const chapterOptions = getAllChapters(state.outline);
 
-    // 模拟重新生成当前章节内容
-    const handleRegenerateChapter = async () => {
-        if (!selectedChapterId) {
-            message.warning('请先选择一个章节进行内容生成。');
-            return;
+    // 自动选择第一个有内容的章节（如果未选择）
+    useEffect(() => {
+        if (!selectedChapterId && chapterOptions.length > 0) {
+            // 优先找已经生成了内容的章节
+            const firstGenerated = chapterOptions.find(opt => state.generatedContent[opt.value]);
+            if (firstGenerated) {
+                setSelectedChapterId(firstGenerated.value);
+            } else {
+                setSelectedChapterId(chapterOptions[0].value);
+            }
         }
-        setLoading(true);
-        try {
-            message.info(`正在重新生成 ${selectedChapterId} 的内容...`);
-            // 实际调用 API 重新生成单个章节
-            // const result = await regenerateChapter(selectedChapterId, state.outline, state.config);
-            // setState({ generatedContent: { ...state.generatedContent, [selectedChapterId]: result } });
-            // 模拟结果
-            setTimeout(() => {
-                const newContent = `【AI重新生成内容】这是针对章节 ${selectedChapterId} 的全新、高质量内容，已基于您的字数设定（${state.outline.find(i => i.id === selectedChapterId)?.wordCount || '未设置'}字）进行了优化。您可以进行实时修改。`;
-                 setState({ 
-                    generatedContent: { 
-                        ...state.generatedContent, 
-                        [selectedChapterId]: newContent 
-                    } 
-                });
-                message.success('章节内容重新生成成功！');
-                setLoading(false);
-            }, 1500);
-            
-        } catch (error) {
-            message.error('章节内容重新生成失败。');
-        } finally {
-            // setLoading(false); // 在 setTimeout 中处理
+    }, [state.generatedContent, selectedChapterId, chapterOptions]);
+
+    // 处理内容变更
+    const handleContentChange = (content: string) => {
+        if (selectedChapterId) {
+            setState((prev) => ({
+                ...prev,
+                generatedContent: {
+                    ...prev.generatedContent,
+                    [selectedChapterId]: content
+                }
+            }));
         }
     };
-    
-    // 导出 Word 文档
+
+    // 导出 Word
     const handleExport = async () => {
         setLoading(true);
         try {
-            message.info('正在请求后端生成 Word 文档，请稍候...');
+            message.info('正在打包导出 Word 文档...');
             await exportToWord(state.generatedContent, state.outline);
-            message.success('Word 文档导出成功！');
-            onNext(); // 跳转到导出完成步骤
+            message.success('导出成功！');
+            onNext();
         } catch (error) {
-            message.error('Word 文档导出失败。');
+            message.error('导出失败，请重试');
         } finally {
             setLoading(false);
         }
     };
 
+    // 模拟重新生成（这里依然保留接口，但主要展示编辑功能）
+    const handleRegenerateChapter = () => {
+        message.info("重新生成功能需连接后端流式接口，当前仅演示编辑功能");
+    };
+
     return (
-        <AntdLayout style={{ background: '#f5f5f5' }}>
-            {/* 顶部的章节选择和操作栏 */}
-            <Content style={{ marginBottom: 16, padding: 16, background: '#fff', borderRadius: 8 }}>
-                <Title level={5} style={{ margin: 0 }}>选择章节编辑</Title>
-                <Select
-                    style={{ width: '100%', marginTop: 8 }}
-                    placeholder="请选择要查看和编辑的章节"
-                    options={chapterOptions}
-                    value={selectedChapterId}
-                    onChange={setSelectedChapterId}
-                    showSearch
-                />
-                <div style={{ marginTop: 16, textAlign: 'right' }}>
-                     <Button 
-                        icon={<ReloadOutlined />}
+        <AntdLayout className="editor-layout">
+            <style>{editorStyles}</style>
+            
+            {/* 顶部操作栏 */}
+            <div style={{ 
+                background: '#fff', 
+                padding: '12px 24px', 
+                borderBottom: '1px solid #e8e8e8',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                zIndex: 200
+            }}>
+                <Space size="middle">
+                    <Title level={4} style={{ margin: 0, color: '#1890ff' }}>
+                        <EditOutlined /> 内容精修
+                    </Title>
+                    <span style={{ color: '#e8e8e8' }}>|</span>
+                    <Text>当前章节：</Text>
+                    <Select
+                        style={{ width: 300 }}
+                        placeholder="切换章节"
+                        options={chapterOptions}
+                        value={selectedChapterId}
+                        onChange={setSelectedChapterId}
+                        showSearch
+                        filterOption={(input, option) =>
+                            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                        }
+                    />
+                </Space>
+
+                <Space>
+                    <Button 
+                        icon={<ReloadOutlined />} 
                         onClick={handleRegenerateChapter}
-                        disabled={!selectedChapterId || loading}
-                        style={{ marginRight: 8 }}
+                        disabled={!selectedChapterId}
                     >
-                        重新生成当前章节
+                        AI 重写本章
                     </Button>
                     <Button 
-                        icon={<FileWordOutlined />}
+                        type="primary" 
+                        icon={<FileWordOutlined />} 
                         onClick={handleExport}
-                        type="primary"
-                        disabled={Object.keys(state.generatedContent).length === 0 || loading}
+                        loading={loading}
+                        disabled={Object.keys(state.generatedContent).length === 0}
                     >
-                        一键导出 Word
+                        导出完整标书
                     </Button>
-                </div>
-            </Content>
-
-            {/* 优化点 2: 类似 Word 的布局实时修改 */}
-            <div className="editor-wrapper">
-                <Spin spinning={loading} tip="内容正在生成/更新...">
-                    <div className="word-paper">
-                        <Title level={2} style={{ textAlign: 'center', marginTop: 0 }}>
-                            {selectedChapterId ? chapterOptions.find(o => o.value === selectedChapterId)?.label : '标书内容编辑区'}
-                        </Title>
-                        
-                        {!selectedChapterId && <Paragraph type="secondary" style={{ textAlign: 'center', marginTop: 50 }}>请在上方选择一个章节开始编辑。</Paragraph>}
-
-                        {/* 这是一个简化的实时编辑区，实际应替换为 TipTap/Slate 等富文本编辑器 */}
-                        {selectedChapterId && (
-                            <div
-                                contentEditable={true} // 启用实时编辑
-                                onInput={(e: React.FormEvent<HTMLDivElement>) => handleContentChange(e.currentTarget.innerHTML)}
-                                dangerouslySetInnerHTML={{ __html: currentContent || 'AI 内容生成中...' }}
-                                style={{
-                                    minHeight: '800px', 
-                                    padding: '10px',
-                                    border: '1px solid #ccc',
-                                    backgroundColor: '#fafafa',
-                                    outline: 'none',
-                                    marginTop: 20,
-                                    // 模拟富文本样式
-                                    lineHeight: 1.6,
-                                    fontSize: '14px'
-                                }}
-                            />
-                        )}
-                        
-                    </div>
-                </Spin>
+                </Space>
             </div>
+
+            {/* 编辑区主体 */}
+            <Content style={{ padding: '24px', overflowY: 'auto' }}>
+                <Spin spinning={loading}>
+                    {selectedChapterId ? (
+                        <div className="a4-paper-container">
+                            {/* ✅ 修正点：这里必须使用 QuillWrapper，不能用 ReactQuill */}
+                            <QuillWrapper
+                                theme="snow"
+                                value={currentContent}
+                                onChange={handleContentChange}
+                                modules={modules}
+                                formats={formats}
+                                className="quill-editor"
+                                placeholder="此处将显示 AI 生成的内容，您可以像使用 Word 一样直接编辑..."
+                            />
+                        </div>
+                    ) : (
+                        <div style={{ marginTop: 100 }}>
+                            <Empty description="请先在左上角选择一个章节" />
+                        </div>
+                    )}
+                </Spin>
+            </Content>
         </AntdLayout>
     );
 };

@@ -302,3 +302,79 @@ export async function analyzeDocumentStream(
         onError(err.message || "流式请求失败");
     }
 }
+
+/**
+ * @function generateContentStream
+ * @description 流式并发生成所有章节内容。后端每生成好一个章节，就会通过 onChapterGenerated 回调一次。
+ * @param documentContent 原文内容（可选）
+ * @param overview 项目概述
+ * @param requirements 技术要求
+ * @param outline 目录结构
+ * @param config 配置
+ * @param onChapterGenerated 回调函数：接收 (chapterId, content)
+ */
+export async function generateContentStream(
+    documentContent: string,
+    overview: string,
+    requirements: string,
+    outline: OutlineItem[],
+    config: AppState['config'],
+    onChapterGenerated: (chapterId: string, content: string) => void
+): Promise<void> {
+    
+    const combinedOverview = `项目概述：\n${overview}\n\n技术评分要求：\n${requirements}`;
+
+    // 1. 发起流式请求
+    const response = await fetch(`${API_BASE_URL}/content/generate-full-project?use_qwen=true`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            project_overview: combinedOverview,
+            outline: outline[0], // 传入根节点
+            config: {
+                api_key: config.apiKey,
+                model_name: config.modelName,
+            }
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`内容生成服务连接失败: ${response.statusText}`);
+    }
+    
+    if (!response.body) throw new Error("ReadableStream not supported");
+
+    // 2. 读取流数据
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6).trim();
+                if (jsonStr === "[DONE]") break;
+                if (!jsonStr) continue;
+
+                try {
+                    const data = JSON.parse(jsonStr);
+                    // 如果该章节生成成功，调用回调更新状态
+                    if (data.success && data.chapter_id && data.content) {
+                        onChapterGenerated(data.chapter_id, data.content);
+                    } else if (!data.success) {
+                        console.error(`章节 ${data.chapter_id} 生成失败: ${data.error}`);
+                    }
+                } catch (e) {
+                    console.warn("解析流数据失败", e);
+                }
+            }
+        }
+    }
+}
