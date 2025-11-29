@@ -8,46 +8,181 @@ from ..utils.config_manager import config_manager
 import json
 import re
 from io import BytesIO
-
-# 补充 python-docx 和 io 的引用
-from docx import Document
-from docx.shared import Pt
-from docx.oxml.ns import qn
 from typing import List
+
+# Word 处理相关库
+from docx import Document
+from docx.shared import Pt, Cm, RGBColor, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 router = APIRouter(prefix="/api/document", tags=["文档处理"])
 
+# -------------------------------------------------------------------------
+# 辅助函数：Word 排版工具
+# -------------------------------------------------------------------------
+
+def set_font(run, font_name='宋体', size=12, bold=False, color=None):
+    """设置中文字体、大小、加粗、颜色"""
+    run.font.name = 'Times New Roman'
+    run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+    if size:
+        run.font.size = Pt(size)
+    
+    # 强制设置粗体属性，避免继承
+    run.font.bold = bold
+    
+    if color:
+        run.font.color.rgb = color
+
+def add_page_number_footer(doc):
+    """添加页脚页码"""
+    section = doc.sections[0]
+    footer = section.footer
+    p = footer.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run("第 ")
+    set_font(run, size=10)
+    fldChar1 = OxmlElement('w:fldChar')
+    fldChar1.set(qn('w:fldCharType'), 'begin')
+    run._element.append(fldChar1)
+    instrText = OxmlElement('w:instrText')
+    instrText.set(qn('xml:space'), 'preserve')
+    instrText.text = "PAGE"
+    run._element.append(instrText)
+    fldChar2 = OxmlElement('w:fldChar')
+    fldChar2.set(qn('w:fldCharType'), 'end')
+    run._element.append(fldChar2)
+    run = p.add_run(" 页")
+    set_font(run, size=10)
+
+def create_cover_page(doc, project_name="投标文件"):
+    """创建标准标书封面"""
+    for _ in range(6): doc.add_paragraph()
+    p_title = doc.add_paragraph()
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p_title.add_run(project_name)
+    set_font(run, '黑体', 26, bold=True)
+    p_title.paragraph_format.space_after = Pt(40)
+    p_sub = doc.add_paragraph()
+    p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p_sub.add_run("投标文件（技术部分）")
+    set_font(run, '黑体', 22, bold=True)
+    p_sub.paragraph_format.space_after = Pt(200)
+    p_info = doc.add_paragraph()
+    p_info.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p_info.add_run("投标人：______________________\n")
+    set_font(run, '宋体', 16)
+    p_date = doc.add_paragraph()
+    p_date.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    import datetime
+    current_date = datetime.datetime.now().strftime("%Y年%m月%d日")
+    run = p_date.add_run(f"日期：{current_date}")
+    set_font(run, '宋体', 16)
+    doc.add_page_break()
+
+def process_html_content(doc, html_content, base_level=1):
+    """
+    递归解析 HTML 并写入 Word
+    ✅ 修复：处理容器内的孤立文本节点，防止内容丢失
+    ✅ 修复：强制正文使用 Normal 样式，防止沿用标题格式
+    """
+    if not html_content:
+        return
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    def traverse(element):
+        # 1. 如果是纯文本节点（NavigableString），且父级是块级元素（如div/body），则需要手动包装成段落
+        if isinstance(element, NavigableString):
+            text = str(element).strip()
+            if text:
+                # 显式指定 style='Normal' 避免继承标题样式
+                p = doc.add_paragraph(style='Normal')
+                p.paragraph_format.first_line_indent = Pt(24)
+                p.paragraph_format.line_spacing = 1.5
+                run = p.add_run(text)
+                set_font(run, '宋体', 12, bold=False)
+            return
+
+        # 2. HTML 标题 (H1-H4)
+        if element.name in ['h1', 'h2', 'h3', 'h4']:
+            level = int(element.name[1])
+            word_level = min(base_level + 1, 9)
+            
+            p = doc.add_heading(level=word_level)
+            text = element.get_text().strip()
+            run = p.add_run(text)
+            set_font(run, '黑体', size=16 - word_level, bold=True)
+            p.paragraph_format.space_before = Pt(12)
+            p.paragraph_format.space_after = Pt(6)
+
+        # 3. 段落 (P)
+        elif element.name == 'p':
+            text = element.get_text().strip()
+            if not text: return
+            
+            # Markdown 标题补救检测
+            md_match = re.match(r'^(#+)\s+(.*)', text)
+            if md_match:
+                hashtags = md_match.group(1)
+                title_text = md_match.group(2)
+                word_level = min(base_level + 1, 9)
+                p = doc.add_heading(level=word_level)
+                run = p.add_run(title_text)
+                set_font(run, '黑体', size=15 if word_level < 3 else 14, bold=True)
+                p.paragraph_format.space_before = Pt(12)
+                return
+
+            # 普通段落：显式指定 style='Normal'
+            p = doc.add_paragraph(style='Normal')
+            p.paragraph_format.first_line_indent = Pt(24)
+            p.paragraph_format.line_spacing = 1.5
+            
+            for child in element.children:
+                child_text = child.get_text() if isinstance(child, Tag) else str(child)
+                if not child_text: continue
+                
+                run = p.add_run(child_text)
+                # 检测加粗
+                is_bold = element.find('strong') or element.find('b') or (isinstance(child, Tag) and child.name in ['strong', 'b'])
+                set_font(run, '宋体', 12, bold=bool(is_bold))
+
+        # 4. 列表 (UL/OL)
+        elif element.name in ['ul', 'ol']:
+            for li in element.find_all('li', recursive=False):
+                p = doc.add_paragraph(style='List Paragraph')
+                run = p.add_run(li.get_text().strip())
+                set_font(run, '宋体', 12)
+
+        # 5. 容器递归 (div, section, body, blockquote 等)
+        # 注意：这里我们手动遍历子节点，以便捕获像 <div>text</div> 这样的结构
+        elif hasattr(element, 'children'):
+            for child in element.children:
+                traverse(child)
+
+    # 从 soup 根节点开始遍历
+    # soup.contents 包含了顶层节点
+    for child in soup.contents:
+        traverse(child)
+
+# -------------------------------------------------------------------------
+# API 路由
+# -------------------------------------------------------------------------
 
 @router.post("/upload", response_model=FileUploadResponse)
 async def upload_file(file: UploadFile = File(...)):
-    """上传文档文件并提取文本内容"""
+    # ... (保持原逻辑) ...
     try:
-        # 检查文件类型
-        allowed_types = [
-            "application/pdf",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ]
-        
+        allowed_types = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
         if file.content_type not in allowed_types:
-            return FileUploadResponse(
-                success=False,
-                message="不支持的文件类型，请上传PDF或Word文档"
-            )
-        
-        # 处理文件并提取文本
+            return FileUploadResponse(success=False, message="不支持的文件类型")
         file_content = await FileService.process_uploaded_file(file)
-        
-        return FileUploadResponse(
-            success=True,
-            message=f"文件 {file.filename} 上传成功",
-            file_content=file_content
-        )
-        
+        return FileUploadResponse(success=True, message=f"文件 {file.filename} 上传成功", file_content=file_content)
     except Exception as e:
-        return FileUploadResponse(
-            success=False,
-            message=f"文件处理失败: {str(e)}"
-        )
+        return FileUploadResponse(success=False, message=f"文件处理失败: {str(e)}")
 
 # ------------------------------
 # 改造文档分析接口：支持Qwen/OpenAI切换
@@ -201,63 +336,61 @@ async def analyze_document(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文档分析失败: {str(e)}")
-    
+
 @router.post("/export")
 async def export_document(request: ExportRequest):
     """
-    将生成的内容和目录导出为 Word 文档
+    导出精美排版的 Word 文档
     """
     try:
-        # 创建 Word 文档
         doc = Document()
         
-        # 设置中文字体辅助函数
-        def set_font(run, font_name='宋体', size=None):
-            run.font.name = font_name
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
-            if size:
-                run.font.size = Pt(size)
+        # 1. 页面设置
+        section = doc.sections[0]
+        section.page_width = Cm(21.0)
+        section.page_height = Cm(29.7)
+        section.left_margin = Cm(3.17)
+        section.right_margin = Cm(3.17)
 
-        # 添加标题
-        title = doc.add_heading(level=0)
-        run = title.add_run("投标文件")
-        set_font(run, '黑体', 24)
-        title.alignment = 1 # 居中
+        # 2. 生成封面
+        create_cover_page(doc, project_name="项目技术标书")
 
-        doc.add_page_break()
+        # 3. 添加页码
+        add_page_number_footer(doc)
 
-        # 递归添加章节内容
+        # 4. 递归生成章节内容
         def add_chapter(items: List[OutlineItem], level: int = 1):
             for item in items:
-                # 添加章节标题
-                # Word 标题等级最多到 9
-                heading_level = level if level <= 9 else 9
-                heading = doc.add_heading(level=heading_level)
-                run = heading.add_run(item.title)
-                # 根据层级简单设置字体
+                # 添加标题
+                safe_level = min(level, 9)
+                p_heading = doc.add_heading(level=safe_level)
+                
+                # 组合编号和标题 (如 "1.1 项目背景")
+                full_title = f"{item.id} {item.title}" 
+                run = p_heading.add_run(full_title)
+                
+                # 标题字体设置
                 if level == 1:
-                    set_font(run, '黑体', 16)
+                    set_font(run, '黑体', 16, bold=True)
+                    p_heading.paragraph_format.space_before = Pt(24)
                 else:
-                    set_font(run, '黑体', 14)
+                    set_font(run, '黑体', 14, bold=False)
+                    p_heading.paragraph_format.space_before = Pt(12)
 
-                # 获取并清理内容
+                # 添加正文内容
                 content = request.content.get(item.id, "")
                 if content:
-                    # 简单去除 HTML 标签（Quill 返回的是 HTML）
-                    # 替换常见块级标签为换行
-                    text = content.replace("</p>", "\n").replace("<p>", "")
-                    text = text.replace("<br>", "\n").replace("</h1>", "\n").replace("</h2>", "\n")
-                    # 去除所有其他 HTML 标签
-                    text = re.sub(r'<[^>]+>', '', text).strip()
-                    
-                    # 添加段落
-                    if text:
-                        # 处理多段落
-                        for para_text in text.split('\n'):
-                            if para_text.strip():
-                                p = doc.add_paragraph(para_text.strip())
-                                p.paragraph_format.first_line_indent = Pt(24) # 首行缩进
-                                set_font(p.add_run(para_text.strip()), '宋体', 12)
+                    try:
+                        process_html_content(doc, content, base_level=level)
+                    except Exception as parse_err:
+                        print(f"HTML解析警告: {parse_err}, 降级为纯文本")
+                        clean_text = re.sub(r'<[^>]+>', '', content).strip()
+                        if clean_text:
+                            # 降级模式也要显式指定 Normal
+                            p = doc.add_paragraph(style='Normal')
+                            p.paragraph_format.first_line_indent = Pt(24)
+                            run = p.add_run(clean_text)
+                            set_font(run, '宋体', 12, bold=False)
 
                 # 递归处理子章节
                 if item.children:
@@ -265,21 +398,21 @@ async def export_document(request: ExportRequest):
 
         add_chapter(request.outline)
 
-        # 保存到内存流
+        # 导出文件
         buffer = BytesIO()
         doc.save(buffer)
         buffer.seek(0)
 
-        # 返回流式响应
         return StreamingResponse(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={
-                "Content-Disposition": "attachment; filename=bid_document.docx",
+                "Content-Disposition": "attachment; filename=Technical_Proposal.docx",
                 "Access-Control-Expose-Headers": "Content-Disposition"
             }
         )
 
     except Exception as e:
-        print(f"导出失败: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")

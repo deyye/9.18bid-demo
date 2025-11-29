@@ -175,7 +175,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
             message.success("修改成功");
         } else if (modalMode === 'add' && currentEditNode) {
             const newItem: OutlineItem = {
-                id: `${currentEditNode.id}-${Date.now()}`,
+                id: `${currentEditNode.id}.${Date.now().toString().slice(-3)}`, // 简单生成带层级的ID后缀，实际建议后端生成
                 title: modalInputValue,
                 level: currentEditNode.level + 1,
                 children: []
@@ -230,16 +230,32 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
             key: item.id,
             title: (
                 <div className="custom-tree-node group">
+                    {/* 左侧：标题区 */}
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
                         <span style={{ marginRight: 8, color: item.level === 1 ? '#1890ff' : '#8c8c8c' }}>
                             {item.children && item.children.length > 0 ? <FolderOpenOutlined /> : <FileOutlined />}
                         </span>
-                        <Text strong={item.level === 1} style={{ fontSize: item.level === 1 ? 16 : 14, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 16 }}>
+                        
+                        {/* ✅ 修正：显示章节号 */}
+                        <Text 
+                            strong={item.level === 1} 
+                            style={{ 
+                                fontSize: item.level === 1 ? 16 : 14, 
+                                color: '#262626', 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis', 
+                                whiteSpace: 'nowrap', 
+                                marginRight: 16 
+                            }}
+                        >
+                            <span style={{ marginRight: 8, fontWeight: 'bold' }}>{item.id}</span>
                             {item.title}
                         </Text>
+                        
                         {item.level === 1 && <Tag color="blue">章</Tag>}
                     </div>
 
+                    {/* 右侧：功能区 (字数 + 按钮) */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                         <div onClick={(e) => e.stopPropagation()}>
                             <InputNumber
@@ -270,7 +286,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
     };
 
     // -------------------------------------------------------------------------
-    // 5. API 调用 (后台并行生成)
+    // 5. API 调用
     // -------------------------------------------------------------------------
     const handleGenerateOutline = async () => {
         if (!state.documentContent || !state.overview || !state.requirements) {
@@ -289,7 +305,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
         }
     };
 
-    // 🚀 核心修改：非阻塞式后台生成
+    // 🚀 非阻塞式后台生成
     const handleGenerateContent = () => {
         if (state.outline.length === 0) {
              message.warning('目录为空');
