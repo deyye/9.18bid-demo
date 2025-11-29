@@ -50,6 +50,7 @@ class OutlineItem(BaseModel):
     id: str
     title: str
     description: str
+    word_count: Optional[int] = Field(None, description="目标字数")  # 新增字段
     children: Optional[List['OutlineItem']] = None
     content: Optional[str] = None
 
@@ -71,7 +72,7 @@ class OutlineRequest(BaseModel):
 
 class ContentGenerationRequest(BaseModel):
     """内容生成请求"""
-    outline: Dict[str, Any] = Field(..., description="目录结构")
+    outline: List[Dict[str, Any]] = Field(..., description="目录结构列表")
     project_overview: str = Field("", description="项目概述")
 
 
@@ -114,3 +115,7 @@ OutlineItemSchema.update_forward_refs()
 
 class OutlineListSchema(BaseModel):
     outline: List[OutlineItemSchema]
+    
+class ExportRequest(BaseModel):
+    content: Dict[str, str] = Field(..., description="章节内容映射 chapter_id -> text")
+    outline: List[OutlineItem] = Field(..., description="目录结构")

@@ -1,11 +1,19 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
-from ..models.schemas import FileUploadResponse, AnalysisRequest, AnalysisType, AnalysisResponse
+from ..models.schemas import FileUploadResponse, AnalysisRequest, AnalysisType, AnalysisResponse, ExportRequest, OutlineItem
 from ..services.file_service import FileService
 from ..services.openai_service import OpenAIService
 from ..services.qwen_api import QwenService
 from ..utils.config_manager import config_manager
 import json
+import re
+from io import BytesIO
+
+# 补充 python-docx 和 io 的引用
+from docx import Document
+from docx.shared import Pt
+from docx.oxml.ns import qn
+from typing import List
 
 router = APIRouter(prefix="/api/document", tags=["文档处理"])
 
@@ -193,3 +201,85 @@ async def analyze_document(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文档分析失败: {str(e)}")
+    
+@router.post("/export")
+async def export_document(request: ExportRequest):
+    """
+    将生成的内容和目录导出为 Word 文档
+    """
+    try:
+        # 创建 Word 文档
+        doc = Document()
+        
+        # 设置中文字体辅助函数
+        def set_font(run, font_name='宋体', size=None):
+            run.font.name = font_name
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+            if size:
+                run.font.size = Pt(size)
+
+        # 添加标题
+        title = doc.add_heading(level=0)
+        run = title.add_run("投标文件")
+        set_font(run, '黑体', 24)
+        title.alignment = 1 # 居中
+
+        doc.add_page_break()
+
+        # 递归添加章节内容
+        def add_chapter(items: List[OutlineItem], level: int = 1):
+            for item in items:
+                # 添加章节标题
+                # Word 标题等级最多到 9
+                heading_level = level if level <= 9 else 9
+                heading = doc.add_heading(level=heading_level)
+                run = heading.add_run(item.title)
+                # 根据层级简单设置字体
+                if level == 1:
+                    set_font(run, '黑体', 16)
+                else:
+                    set_font(run, '黑体', 14)
+
+                # 获取并清理内容
+                content = request.content.get(item.id, "")
+                if content:
+                    # 简单去除 HTML 标签（Quill 返回的是 HTML）
+                    # 替换常见块级标签为换行
+                    text = content.replace("</p>", "\n").replace("<p>", "")
+                    text = text.replace("<br>", "\n").replace("</h1>", "\n").replace("</h2>", "\n")
+                    # 去除所有其他 HTML 标签
+                    text = re.sub(r'<[^>]+>', '', text).strip()
+                    
+                    # 添加段落
+                    if text:
+                        # 处理多段落
+                        for para_text in text.split('\n'):
+                            if para_text.strip():
+                                p = doc.add_paragraph(para_text.strip())
+                                p.paragraph_format.first_line_indent = Pt(24) # 首行缩进
+                                set_font(p.add_run(para_text.strip()), '宋体', 12)
+
+                # 递归处理子章节
+                if item.children:
+                    add_chapter(item.children, level + 1)
+
+        add_chapter(request.outline)
+
+        # 保存到内存流
+        buffer = BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+
+        # 返回流式响应
+        return StreamingResponse(
+            buffer,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": "attachment; filename=bid_document.docx",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+
+    except Exception as e:
+        print(f"导出失败: {e}")
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")

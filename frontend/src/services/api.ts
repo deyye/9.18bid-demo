@@ -187,7 +187,7 @@ export async function generateContent(
         body: JSON.stringify({ 
             // document_content: documentContent, // 后端 ContentGenerationRequest 似乎没定义这个，暂时注释或保留视后端情况而定
             project_overview: combinedOverview,   // ✅ 传入合并后的上下文
-            outline: outline[0], // ⚠️ 注意：generate_controller.py 似乎期望单个根节点 (Dict)，如果 outline 是数组请传 outline[0] 或调整结构
+            outline: outline, // ⚠️ 注意：generate_controller.py 似乎期望单个根节点 (Dict)，如果 outline 是数组请传 outline[0] 或调整结构
             config: {
                 api_key: config.apiKey,
                 model_name: config.modelName,
@@ -332,7 +332,7 @@ export async function generateContentStream(
         },
         body: JSON.stringify({ 
             project_overview: combinedOverview,
-            outline: outline[0], // 传入根节点
+            outline: outline, // 传入根节点
             config: {
                 api_key: config.apiKey,
                 model_name: config.modelName,

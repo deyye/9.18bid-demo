@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Select, message, Spin, Typography, Layout as AntdLayout, Space, Empty } from 'antd';
-import { FileWordOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons';
+import { Button, Select, message, Spin, Typography, Layout as AntdLayout, Space, Empty, Tag } from 'antd';
+import { FileWordOutlined, ReloadOutlined, EditOutlined, LoadingOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import useAppState from '../hooks/useAppState';
 import { exportToWord } from '../services/api';
 // 引入 ReactQuill 及样式
@@ -8,7 +8,7 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 
 // 🟢 关键修复：创建一个避开类型检查的 Quill 包装器
-// 这里使用 'as any' 彻底解决 "JSX element class does not support attributes" 报错
+// 这解决了 "JSX element class does not support attributes" 的 TS 报错
 const QuillWrapper = ReactQuill as any;
 
 const { Title, Text } = Typography;
@@ -134,7 +134,7 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                 setSelectedChapterId(chapterOptions[0].value);
             }
         }
-    }, [state.generatedContent, selectedChapterId, chapterOptions]);
+    }, [state.generatedContent]);
 
     // 处理内容变更
     const handleContentChange = (content: string) => {
@@ -164,7 +164,6 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         }
     };
 
-    // 模拟重新生成（这里依然保留接口，但主要展示编辑功能）
     const handleRegenerateChapter = () => {
         message.info("重新生成功能需连接后端流式接口，当前仅演示编辑功能");
     };
@@ -189,6 +188,18 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                         <EditOutlined /> 内容精修
                     </Title>
                     <span style={{ color: '#e8e8e8' }}>|</span>
+                    
+                    {/* 状态指示器 */}
+                    {state.isGenerating ? (
+                        <Tag icon={<LoadingOutlined />} color="processing">
+                            AI 正在撰写中... ({Object.keys(state.generatedContent).length}/{chapterOptions.length})
+                        </Tag>
+                    ) : (
+                        <Tag icon={<CheckCircleOutlined />} color="success">
+                            生成完成
+                        </Tag>
+                    )}
+
                     <Text>当前章节：</Text>
                     <Select
                         style={{ width: 300 }}
@@ -228,7 +239,7 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                 <Spin spinning={loading}>
                     {selectedChapterId ? (
                         <div className="a4-paper-container">
-                            {/* ✅ 修正点：这里必须使用 QuillWrapper，不能用 ReactQuill */}
+                            {/* 使用包装器组件 */}
                             <QuillWrapper
                                 theme="snow"
                                 value={currentContent}

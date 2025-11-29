@@ -1,5 +1,5 @@
 // ⬇️ 修复：显式导入 React
-import React, { createContext, useContext, useState, Dispatch, SetStateAction } from 'react';
+import React, { createContext, useContext, useState} from 'react';
 import { AppState, ProcessStep } from '../types'; 
 
 // 标书助手应用的默认初始状态
@@ -7,13 +7,12 @@ const initialAppState: AppState = {
     currentStep: ProcessStep.DOCUMENT_ANALYSIS,
     documentContent: '',
     
-    // 🔴 删除: analysisResult: '', 
-    // 🟢 新增:
     overview: '', 
     requirements: '',
 
     outline: [],
     generatedContent: {},
+    isGenerating: false,
     config: {
         modelName: 'qwen3-14b',
         apiKey: '',

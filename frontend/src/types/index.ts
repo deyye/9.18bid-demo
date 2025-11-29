@@ -42,4 +42,6 @@ export interface AppState {
   
   outline: OutlineItem[]; 
   generatedContent: { [key: string]: string }; 
+
+  isGenerating?: boolean;
 }

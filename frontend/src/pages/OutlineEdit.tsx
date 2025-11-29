@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Button, Card, Tree, InputNumber, Space, Typography, message, Spin, Modal, Input, Tooltip, Popconfirm, Tag, Empty, Divider, Row, Col } from 'antd';
+import { Button, Card, Tree, InputNumber, Space, Typography, message, Spin, Modal, Input, Tooltip, Popconfirm, Tag, Empty, Row, Col } from 'antd';
 import { 
     EditOutlined, 
     PlusOutlined, 
@@ -11,9 +11,10 @@ import {
     AimOutlined,
     CalculatorOutlined
 } from '@ant-design/icons';
-import { OutlineItem, ProcessStep } from '../types';
+// 引入 AppState 以修复类型报错
+import { OutlineItem, ProcessStep, AppState } from '../types';
 import useAppState from '../hooks/useAppState';
-import { generateOutline, generateContent } from '../services/api'; 
+import { generateOutline, generateContentStream } from '../services/api'; 
 import type { DataNode, TreeProps } from 'antd/es/tree';
 
 // 样式：确保树节点占满整行，对齐美观
@@ -51,7 +52,7 @@ interface OutlineEditProps {
 
 const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
     const { state, setState } = useAppState();
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(false); // 仅用于目录生成的 loading
     
     // 全文总字数状态
     const [totalTargetWords, setTotalTargetWords] = useState<number>(5000);
@@ -136,7 +137,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
         setState({ outline: newOutline });
     };
 
-    // ... (增删改查弹窗逻辑保持不变)
+    // ... (增删改查弹窗逻辑)
     const updateTitleRecursively = (items: OutlineItem[], id: string, newTitle: string): OutlineItem[] => {
         return items.map(item => {
             if (item.id === id) return { ...item, title: newTitle };
@@ -192,7 +193,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
     };
 
     // -------------------------------------------------------------------------
-    // 3. 拖拽逻辑 (保持不变)
+    // 3. 拖拽逻辑
     // -------------------------------------------------------------------------
     const onDrop: TreeProps['onDrop'] = (info) => {
         const dropKey = info.node.key as string;
@@ -229,7 +230,6 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
             key: item.id,
             title: (
                 <div className="custom-tree-node group">
-                    {/* 左侧：标题区 */}
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
                         <span style={{ marginRight: 8, color: item.level === 1 ? '#1890ff' : '#8c8c8c' }}>
                             {item.children && item.children.length > 0 ? <FolderOpenOutlined /> : <FileOutlined />}
@@ -240,9 +240,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
                         {item.level === 1 && <Tag color="blue">章</Tag>}
                     </div>
 
-                    {/* 右侧：功能区 (字数 + 按钮) */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                        {/* 仅叶子节点或二级以上节点显示字数输入框 */}
                         <div onClick={(e) => e.stopPropagation()}>
                             <InputNumber
                                 addonAfter="字"
@@ -257,7 +255,6 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
                             />
                         </div>
 
-                        {/* 操作按钮组 - 悬浮显示 */}
                         <Space className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                             <Tooltip title="修改标题"><Button type="text" size="small" icon={<EditOutlined style={{ color: '#1890ff' }} />} onClick={(e) => { e.stopPropagation(); openModal('edit', item); }} /></Tooltip>
                             <Tooltip title="添加子章节"><Button type="text" size="small" icon={<PlusOutlined style={{ color: '#52c41a' }} />} onClick={(e) => { e.stopPropagation(); openModal('add', item); }} /></Tooltip>
@@ -273,7 +270,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
     };
 
     // -------------------------------------------------------------------------
-    // 5. API 调用
+    // 5. API 调用 (后台并行生成)
     // -------------------------------------------------------------------------
     const handleGenerateOutline = async () => {
         if (!state.documentContent || !state.overview || !state.requirements) {
@@ -292,22 +289,58 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
         }
     };
 
-    const handleGenerateContent = async () => {
+    // 🚀 核心修改：非阻塞式后台生成
+    const handleGenerateContent = () => {
         if (state.outline.length === 0) {
              message.warning('目录为空');
              return;
         }
-        setLoading(true);
-        try {
-            message.info('正在生成内容...');
-            const result = await generateContent(state.documentContent, state.overview, state.requirements, state.outline, state.config);
-            setState({ generatedContent: result });
-            onNext(); 
-        } catch (error) {
-            message.error('内容生成失败');
-        } finally {
-            setLoading(false);
-        }
+
+        // 1. 设置全局生成状态
+        setState({ isGenerating: true });
+
+        // 2. 启动后台流式任务 (不等待)
+        generateContentStream(
+            state.documentContent, 
+            state.overview, 
+            state.requirements, 
+            state.outline, 
+            state.config,
+            (chapterId, content) => {
+                // 实时更新全局状态
+                setState((prev: AppState) => ({
+                    ...prev,
+                    generatedContent: {
+                        ...prev.generatedContent,
+                        [chapterId]: content
+                    }
+                }));
+            }
+        ).then(() => {
+            setState({ isGenerating: false });
+            message.success({ content: '🎉 所有章节内容生成完成！', duration: 5 });
+        }).catch((error) => {
+            console.error(error);
+            setState({ isGenerating: false });
+            message.error('生成过程中断，请检查网络或后端服务');
+        });
+
+        // 3. 立即引导跳转
+        Modal.success({
+            title: '🚀 内容生成已启动',
+            content: (
+                <div>
+                    <p>AI 正在后台并行生成所有章节内容。</p>
+                    <p>您可以立即前往<b>编辑页面</b>，内容将实时逐章呈现。</p>
+                </div>
+            ),
+            okText: '立即前往编辑',
+            onOk: () => {
+                onNext(); 
+            },
+            cancelText: '稍后',
+            closable: true,
+        });
     };
 
     return (
@@ -327,7 +360,6 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
                     />
                 ) : (
                     <>
-                        {/* 🟢 新增：全局字数设置栏 */}
                         <div style={{ marginBottom: 20, backgroundColor: '#f0f5ff', padding: '16px 24px', borderRadius: 8, border: '1px solid #d6e4ff' }}>
                             <Row gutter={24} align="middle">
                                 <Col flex="auto">
@@ -362,7 +394,6 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
                             </Row>
                         </div>
 
-                        {/* 目录树区域 */}
                         <div style={{ maxHeight: '60vh', overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, backgroundColor: '#fff' }}>
                             <Tree
                                 className="draggable-tree"
@@ -378,7 +409,7 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
                         </div>
 
                         <div style={{ textAlign: 'right', marginTop: 24, padding: '16px 0', borderTop: '1px solid #f0f0f0' }}>
-                            <Button type="primary" size="large" onClick={handleGenerateContent} disabled={state.outline.length === 0 || loading} icon={<SaveOutlined />} style={{ paddingLeft: 32, paddingRight: 32 }}>
+                            <Button type="primary" size="large" onClick={handleGenerateContent} disabled={state.outline.length === 0} icon={<SaveOutlined />} style={{ paddingLeft: 32, paddingRight: 32 }}>
                                 确认目录并生成内容
                             </Button>
                         </div>
@@ -386,7 +417,6 @@ const OutlineEdit: React.FC<OutlineEditProps> = ({ onNext }) => {
                 )}
             </Spin>
 
-            {/* 编辑/添加 弹窗 */}
             <Modal title={modalMode === 'add' ? "添加子章节" : "修改章节标题"} open={isModalOpen} onOk={handleModalOk} onCancel={() => setIsModalOpen(false)} destroyOnClose maskClosable={false}>
                 <div style={{ paddingTop: 16, paddingBottom: 16 }}>
                     <Text strong style={{ marginBottom: 8, display: 'block' }}>章节标题</Text>
