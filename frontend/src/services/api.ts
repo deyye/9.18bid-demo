@@ -382,6 +382,7 @@ export async function generateContentStream(
 // ----------------------------------------------------
 // 6. 知识库管理 API
 // ----------------------------------------------------
+
 export interface KnowledgeResponse {
     success: boolean;
     message: string;
@@ -390,24 +391,16 @@ export interface KnowledgeResponse {
 
 export interface SearchResult {
     query: string;
-    results: string; // 后端返回的是拼接好的字符串，或者是列表，根据你的后端逻辑调整
-    // 如果后端 rag_service.search 返回的是 list，这里应该是 string[]
-    // 查看之前后端代码：rag_service.search 返回 List[str]，但在 router.post("/test-search") 中直接返回了 {"results": ...}
-    // 所以这里定义为 string[] 更合适，或者根据实际返回调整
+    results: any; 
 }
 
-/**
- * 上传知识库文档
- */
 export async function uploadKnowledge(file: File, docType: string = 'general'): Promise<KnowledgeResponse> {
     const formData = new FormData();
     formData.append('file', file);
-    // doc_type 作为查询参数传递
     const response = await fetch(`${API_BASE_URL}/knowledge/upload?doc_type=${docType}`, {
         method: 'POST',
         body: formData,
     });
-
     if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || '上传失败');
@@ -415,24 +408,30 @@ export async function uploadKnowledge(file: File, docType: string = 'general'): 
     return await response.json();
 }
 
-/**
- * 重置/清空知识库
- */
 export async function resetKnowledge(): Promise<KnowledgeResponse> {
-    const response = await fetch(`${API_BASE_URL}/knowledge/reset`, {
-        method: 'POST',
-    });
+    const response = await fetch(`${API_BASE_URL}/knowledge/reset`, { method: 'POST' });
     if (!response.ok) throw new Error('重置失败');
     return await response.json();
 }
 
-/**
- * 测试知识库检索
- */
 export async function searchKnowledge(query: string): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/knowledge/test-search?query=${encodeURIComponent(query)}`, {
-        method: 'POST',
-    });
+    const response = await fetch(`${API_BASE_URL}/knowledge/test-search?query=${encodeURIComponent(query)}`, { method: 'POST' });
     if (!response.ok) throw new Error('检索失败');
     return await response.json();
+}
+
+// ✅ 新增：获取知识库列表
+export async function getKnowledgeList(limit: number = 20, offset: number = 0): Promise<{ total: number, items: any[] }> {
+    const response = await fetch(`${API_BASE_URL}/knowledge/list?limit=${limit}&offset=${offset}`);
+    if (!response.ok) throw new Error('获取列表失败');
+    return await response.json();
+}
+
+// ✅ 新增：删除知识库文件
+export async function deleteKnowledgeFile(source: string): Promise<void> {
+    // 使用 DELETE 方法，通常参数在 URL 中
+    const response = await fetch(`${API_BASE_URL}/knowledge/delete?source=${encodeURIComponent(source)}`, {
+        method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('删除失败');
 }

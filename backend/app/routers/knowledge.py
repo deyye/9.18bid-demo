@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from ..services.file_service import FileService
 from ..services.rag_service import get_rag_service
 
@@ -32,7 +32,6 @@ async def upload_knowledge(
         if not text:
             raise HTTPException(status_code=400, detail="无法提取文本内容")
 
-        # ✅ 修改：按需获取实例
         rag_service = get_rag_service()
         count = rag_service.add_document(text, source=file.filename, doc_type=doc_type)
         
@@ -49,12 +48,23 @@ async def upload_knowledge(
 
 @router.post("/reset", response_model=KnowledgeResponse)
 async def reset_knowledge():
-    # ✅ 修改：按需获取实例
     get_rag_service().clear()
     return KnowledgeResponse(success=True, message="知识库已清空")
 
 @router.post("/test-search")
 async def test_search(query: str):
-    # ✅ 修改：按需获取实例
     results = get_rag_service().search(query)
     return {"query": query, "results": results}
+
+# ✅ 新增：获取列表接口
+@router.get("/list")
+async def list_knowledge(limit: int = 10, offset: int = 0):
+    """分页获取知识库内容"""
+    return get_rag_service().list_documents(limit, offset)
+
+# ✅ 新增：删除文件接口
+@router.delete("/delete")
+async def delete_knowledge_file(source: str):
+    """根据文件名删除知识库内容"""
+    get_rag_service().delete_document_by_source(source)
+    return {"success": True, "message": f"文件 {source} 的相关知识已删除"}
