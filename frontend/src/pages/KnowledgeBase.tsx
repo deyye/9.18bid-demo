@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-// ✅ 引入 Modal, Table 等组件
-import { Card, Upload, Button, Select, message, Typography, Space, Input, List, Tag, Alert, Modal, Table, Tabs } from 'antd';
-import { InboxOutlined, DeleteOutlined, SearchOutlined, CloudUploadOutlined, ReadOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Upload, Button, Select, message, Typography, Space, Input, List, Tag, Alert, Modal, Table, Tabs, notification, Progress, Tooltip } from 'antd';
+// ✅ 引入 EyeOutlined 图标
+import { DeleteOutlined, SearchOutlined, CloudUploadOutlined, ReadOutlined, ReloadOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
-// ✅ 引入新 API
+import { RcFile } from 'antd/es/upload';
 import { uploadKnowledge, resetKnowledge, searchKnowledge, getKnowledgeList, deleteKnowledgeFile } from '../services/api';
 
 const { Title, Text, Paragraph } = Typography;
@@ -23,7 +23,13 @@ const KnowledgeBase: React.FC = () => {
     const [total, setTotal] = useState(0);
     const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
 
-    // 初始加载列表
+    // ✅ 新增：查看详情弹窗状态
+    const [viewModalOpen, setViewModalOpen] = useState(false);
+    const [viewContent, setViewContent] = useState('');
+    const [viewSource, setViewSource] = useState('');
+
+    const [api, contextHolder] = notification.useNotification();
+
     useEffect(() => {
         fetchList(1, 10);
     }, []);
@@ -43,7 +49,6 @@ const KnowledgeBase: React.FC = () => {
         }
     };
 
-    // 删除文件逻辑
     const handleDeleteFile = (source: string) => {
         Modal.confirm({
             title: `确认删除文件 "${source}"？`,
@@ -55,7 +60,7 @@ const KnowledgeBase: React.FC = () => {
                 try {
                     await deleteKnowledgeFile(source);
                     message.success("删除成功");
-                    fetchList(pagination.current, pagination.pageSize); // 刷新列表
+                    fetchList(pagination.current, pagination.pageSize); 
                 } catch (e) {
                     message.error("删除失败");
                 }
@@ -63,23 +68,30 @@ const KnowledgeBase: React.FC = () => {
         });
     };
 
-    // 表格列定义
+    // ✅ 新增：处理查看点击
+    const handleViewContent = (record: any) => {
+        setViewContent(record.content);
+        setViewSource(record.source);
+        setViewModalOpen(true);
+    };
+
     const columns = [
         {
             title: '来源文件',
             dataIndex: 'source',
             key: 'source',
-            width: 200,
-            render: (text: string) => <Tag color="blue">{text}</Tag>
+            width: 220,
+            render: (text: string) => <Tag icon={<FileTextOutlined />} color="blue" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</Tag>
         },
         {
             title: '类型',
             dataIndex: 'type',
             key: 'type',
-            width: 120,
+            width: 100,
             render: (text: string) => {
                 const colors: any = { general: 'default', product: 'cyan', history: 'purple', qualification: 'gold' };
-                return <Tag color={colors[text] || 'default'}>{text}</Tag>;
+                const labels: any = { general: '通用', product: '产品', history: '历史标书', qualification: '资质' };
+                return <Tag color={colors[text] || 'default'}>{labels[text] || text}</Tag>;
             }
         },
         {
@@ -87,7 +99,7 @@ const KnowledgeBase: React.FC = () => {
             dataIndex: 'content',
             key: 'content',
             render: (text: string) => (
-                <div style={{ maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis', color: '#666', fontSize: 13 }}>
+                <div style={{ maxHeight: 50, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', color: '#666', fontSize: 13 }}>
                     {text}
                 </div>
             )
@@ -95,38 +107,105 @@ const KnowledgeBase: React.FC = () => {
         {
             title: '操作',
             key: 'action',
-            width: 100,
+            width: 160,
             render: (_: any, record: any) => (
-                <Button type="link" danger size="small" onClick={() => handleDeleteFile(record.source)}>
-                    删除文件
-                </Button>
+                <Space>
+                    {/* ✅ 新增查看按钮 */}
+                    <Button 
+                        type="link" 
+                        size="small" 
+                        icon={<EyeOutlined />} 
+                        onClick={() => handleViewContent(record)}
+                    >
+                        查看
+                    </Button>
+                    <Tooltip title="将删除该文件来源的所有切片">
+                        <Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteFile(record.source)}>
+                            删除文件
+                        </Button>
+                    </Tooltip>
+                </Space>
             ),
         },
     ];
 
-    // 上传配置
+    const customRequest = async (options: any) => {
+        const { file, onSuccess, onError } = options;
+        const rcFile = file as RcFile;
+        const key = `upload-${rcFile.uid}`;
+
+        setUploading(true);
+
+        api.open({
+            key,
+            message: '正在上传文档...',
+            description: (
+                <div style={{ width: 280 }}>
+                    <Progress percent={0} size="small" status="active" />
+                    <div style={{ marginTop: 4, fontSize: 12, color: '#888' }}>
+                        准备上传: {rcFile.name}
+                    </div>
+                </div>
+            ),
+            placement: 'bottomRight',
+            duration: 0, 
+            icon: <CloudUploadOutlined style={{ color: '#1890ff' }} />,
+        });
+
+        try {
+            const res = await uploadKnowledge(rcFile, docType, (percent) => {
+                api.open({
+                    key,
+                    message: percent < 100 ? '正在上传文档...' : '正在解析入库...',
+                    description: (
+                        <div style={{ width: 280 }}>
+                            <Progress 
+                                percent={percent} 
+                                size="small" 
+                                status={percent === 100 ? 'active' : 'active'} 
+                                showInfo={true}
+                            />
+                            <div style={{ marginTop: 4, fontSize: 12, color: '#888' }}>
+                                {percent < 100 ? '数据传输中...' : '服务端正在解析切片，请稍候...'}
+                            </div>
+                        </div>
+                    ),
+                    placement: 'bottomRight',
+                    duration: 0,
+                });
+            });
+
+            api.success({
+                key,
+                message: '处理完成',
+                description: `文件 ${rcFile.name} 已成功入库，新增 ${res.chunks_added} 个知识片段。`,
+                placement: 'bottomRight',
+                duration: 4.5,
+            });
+            
+            onSuccess?.(res);
+            fetchList(1, 10); 
+        } catch (err: any) {
+            api.error({
+                key,
+                message: '入库失败',
+                description: `文件 ${rcFile.name} 处理出错: ${err.message}`,
+                placement: 'bottomRight',
+                duration: 4.5,
+            });
+            onError?.(err);
+        } finally {
+            setUploading(false);
+        }
+    };
+
     const uploadProps: UploadProps = {
         name: 'file',
         multiple: true,
         showUploadList: false,
-        customRequest: async (options) => {
-            const { file, onSuccess, onError } = options;
-            setUploading(true);
-            try {
-                const res = await uploadKnowledge(file as File, docType);
-                message.success(`${(file as File).name} 上传成功，新增 ${res.chunks_added} 个片段`);
-                onSuccess?.(res);
-                fetchList(1, 10); // 上传成功后刷新第一页
-            } catch (err: any) {
-                message.error(`${(file as File).name} 上传失败: ${err.message}`);
-                onError?.(err);
-            } finally {
-                setUploading(false);
-            }
-        },
+        customRequest: customRequest,
     };
 
-    // 重置
     const handleReset = async () => {
         Modal.confirm({
             title: '确认清空知识库？',
@@ -147,7 +226,6 @@ const KnowledgeBase: React.FC = () => {
         });
     };
 
-    // 搜索
     const handleSearch = async () => {
         if (!searchQuery.trim()) return;
         setSearching(true);
@@ -165,6 +243,8 @@ const KnowledgeBase: React.FC = () => {
 
     return (
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: 24 }}>
+            {contextHolder}
+
             <Space direction="vertical" size="large" style={{ width: '100%' }}>
                 
                 <div style={{ textAlign: 'center', marginBottom: 10 }}>
@@ -219,7 +299,7 @@ const KnowledgeBase: React.FC = () => {
                                 <Dragger {...uploadProps} style={{ padding: 40, background: '#fafafa', border: '2px dashed #d9d9d9' }}>
                                     <p className="ant-upload-drag-icon"><CloudUploadOutlined style={{ color: '#1890ff' }} /></p>
                                     <p className="ant-upload-text">点击或拖拽文件到此处上传</p>
-                                    <p className="ant-upload-hint">系统会自动解析并切片存入 RAG 数据库</p>
+                                    <p className="ant-upload-hint">支持批量上传，右下角将显示处理进度</p>
                                 </Dragger>
                             </Card>
                         )
@@ -270,6 +350,41 @@ const KnowledgeBase: React.FC = () => {
                 ]} />
 
             </Space>
+
+            {/* ✅ 新增：查看完整内容的模态框 */}
+            <Modal
+                title={
+                    <Space>
+                        <FileTextOutlined />
+                        <span>知识片段详情</span>
+                        <Tag color="blue">{viewSource}</Tag>
+                    </Space>
+                }
+                open={viewModalOpen}
+                onCancel={() => setViewModalOpen(false)}
+                footer={[
+                    <Button key="close" onClick={() => setViewModalOpen(false)}>
+                        关闭
+                    </Button>
+                ]}
+                width={800}
+                centered
+            >
+                <div style={{ 
+                    maxHeight: '60vh', 
+                    overflowY: 'auto', 
+                    whiteSpace: 'pre-wrap', 
+                    padding: '16px', 
+                    background: '#f5f5f5', 
+                    borderRadius: '4px',
+                    border: '1px solid #e8e8e8',
+                    fontFamily: 'Consolas, "Courier New", monospace',
+                    fontSize: '14px',
+                    lineHeight: '1.6'
+                }}>
+                    {viewContent}
+                </div>
+            </Modal>
         </div>
     );
 };

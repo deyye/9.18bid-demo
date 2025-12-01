@@ -394,18 +394,51 @@ export interface SearchResult {
     results: any; 
 }
 
-export async function uploadKnowledge(file: File, docType: string = 'general'): Promise<KnowledgeResponse> {
-    const formData = new FormData();
-    formData.append('file', file);
-    const response = await fetch(`${API_BASE_URL}/knowledge/upload?doc_type=${docType}`, {
-        method: 'POST',
-        body: formData,
+// ✅ 修改：使用 XMLHttpRequest 支持上传进度监听
+export async function uploadKnowledge(
+    file: File, 
+    docType: string = 'general',
+    onProgress?: (percent: number) => void
+): Promise<KnowledgeResponse> {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        xhr.open('POST', `${API_BASE_URL}/knowledge/upload?doc_type=${docType}`);
+        
+        // 监听上传进度
+        if (xhr.upload && onProgress) {
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const percent = Math.round((event.loaded / event.total) * 100);
+                    onProgress(percent);
+                }
+            };
+        }
+
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    resolve(response);
+                } catch (e) {
+                    reject(new Error('服务器返回数据格式错误'));
+                }
+            } else {
+                try {
+                    const errorData = JSON.parse(xhr.responseText);
+                    reject(new Error(errorData.detail || '上传失败'));
+                } catch (e) {
+                    reject(new Error(`上传失败 (${xhr.status})`));
+                }
+            }
+        };
+
+        xhr.onerror = () => reject(new Error('网络请求失败'));
+        
+        xhr.send(formData);
     });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '上传失败');
-    }
-    return await response.json();
 }
 
 export async function resetKnowledge(): Promise<KnowledgeResponse> {
@@ -420,16 +453,13 @@ export async function searchKnowledge(query: string): Promise<any> {
     return await response.json();
 }
 
-// ✅ 新增：获取知识库列表
 export async function getKnowledgeList(limit: number = 20, offset: number = 0): Promise<{ total: number, items: any[] }> {
     const response = await fetch(`${API_BASE_URL}/knowledge/list?limit=${limit}&offset=${offset}`);
     if (!response.ok) throw new Error('获取列表失败');
     return await response.json();
 }
 
-// ✅ 新增：删除知识库文件
 export async function deleteKnowledgeFile(source: string): Promise<void> {
-    // 使用 DELETE 方法，通常参数在 URL 中
     const response = await fetch(`${API_BASE_URL}/knowledge/delete?source=${encodeURIComponent(source)}`, {
         method: 'DELETE',
     });
