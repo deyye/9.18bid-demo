@@ -12,3 +12,4 @@ backend/static/
 package-lock.json
 package.json
 /.vscode/
+backend/data/
