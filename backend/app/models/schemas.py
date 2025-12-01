@@ -103,7 +103,7 @@ class OutlineItemSchema(BaseModel):
     children: Optional[List['OutlineItemSchema']] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
         # 允许内部递归引用
         arbitrary_types_allowed = True
         # ⬇️ 修复 NameError：移除在类定义期间引用自身的 json_encoders
