@@ -110,6 +110,37 @@ class RagService:
 
     def delete_document_by_source(self, source: str):
         self.collection.delete(where={"source": source})
+        
+    def search(self, query: str, n_results: int = 3, filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        检索知识库
+        :param filter: ChromaDB 的 where 过滤条件，例如 {"source": "filename.pdf"} 或 {"source": {"$in": [...]}}
+        """
+        if self.collection.count() == 0: return []
+        
+        try:
+            results = self.collection.query(
+                query_texts=[query], 
+                n_results=n_results,
+                where=filter, # ✅ 传入过滤条件
+                include=["documents", "metadatas"]
+            )
+            
+            if results and results.get('documents'):
+                retrieved_data = []
+                for i in range(len(results['documents'][0])):
+                    doc_content = results['documents'][0][i]
+                    metadata = results['metadatas'][0][i]
+                    retrieved_data.append({
+                        "content": doc_content,
+                        "source": metadata.get("source", "unknown"),
+                        "type": metadata.get("type", "general")
+                    })
+                return retrieved_data
+        except Exception as e:
+            logger.error(f"RAG Search Error: {e}")
+            return []
+        return []
 
     def _split_text(self, text: str, chunk_size: int, overlap: int) -> List[str]:
         if not text: return []
@@ -125,7 +156,6 @@ class RagService:
 
 # 单例模式
 _rag_instance = None
-
 def get_rag_service():
     global _rag_instance
     if _rag_instance is None:

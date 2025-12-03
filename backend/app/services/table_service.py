@@ -11,6 +11,8 @@ from ..models.business_models import (
     Product, Person, EducationBackground, QualificationCertificate,
     Project, Contract, ProjectPerson, Bid, BidCatalogue, BidFileSubentry
 )
+from ..db_models import Attachment
+
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ class TableService:
     def get_table_model(self, table_name: str) -> Type[Any] | None:
         """根据表名返回对应的 ORM 模型"""
         mapping = {
+            't_attachment': Attachment,
             't_company': Company,
             't_business_certification': BusinessCertification,
             't_patent': Patent,

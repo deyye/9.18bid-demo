@@ -332,13 +332,13 @@ async def generate_chapter_content_stream(
             rag_context_str = "\n### 💡 参考资料 (企业知识库)\n未检索到相关知识片段，请基于项目概述和章节要求进行生成。\n"
 
         # 3. 动态构建 Prompt (将 RAG 结果注入 Prompt)
-        length_instruction = ""
-        if target_word_count >= 2000:
-            length_instruction = f"【⭐⭐⭐ 篇幅要求：极详】目标字数：{target_word_count}字以上。策略：必须深度扩写！请增加技术细节、流程步骤、数据表格。"
-        elif target_word_count <= 500:
-            length_instruction = f"【⭐ 篇幅要求：精简】目标字数：{target_word_count}字左右。策略：语言精练，直击要点。"
-        else:
-            length_instruction = f"【⭐⭐ 篇幅要求：适中】目标字数：{target_word_count}字左右。内容充实，逻辑清晰。"
+        # length_instruction = ""
+        # if target_word_count >= 2000:
+        #     length_instruction = f"【⭐⭐⭐ 篇幅要求：极详】目标字数：{target_word_count}字以上。策略：必须深度扩写！请增加技术细节、流程步骤、数据表格。"
+        # elif target_word_count <= 500:
+        #     length_instruction = f"【⭐ 篇幅要求：精简】目标字数：{target_word_count}字左右。策略：语言精练，直击要点。"
+        # else:
+        #     length_instruction = f"【⭐⭐ 篇幅要求：适中】目标字数：{target_word_count}字左右。内容充实，逻辑清晰。"
             
         # 4. 构建专业招投标提示词
         system_prompt = build_bidding_system_prompt()
@@ -348,7 +348,7 @@ async def generate_chapter_content_stream(
             title=title,
             desc=desc,
             parent_text=parent_text,
-            target_word_count=length_instruction,
+            target_word_count=target_word_count,
             rag_context=rag_context_str
         )
 
