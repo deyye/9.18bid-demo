@@ -19,16 +19,26 @@ class CompanyCreateUpdate(BaseModel):
     # ... 其他字段
 
 # --- 通用表结构查询 ---
-
 @router.get("/tables")
 async def get_available_tables():
     """获取所有可管理的业务表名及描述"""
     return {
         "tables": [
-            {"name": "t_company", "description": "公司基本信息表"},
-            {"name": "t_person", "description": "企业人员信息表 (示例)"},
-            {"name": "t_project", "description": "项目投标信息表 (示例)"},
-            # ... 更多表
+            {"name": "t_company", "description": "公司信息表"},
+            {"name": "t_attachment", "description": "系统附件表"},
+            {"name": "t_business_certification", "description": "资质认证表"},
+            {"name": "t_patent", "description": "专利信息表"},
+            {"name": "t_software_copyright", "description": "软件著作权表"},
+            {"name": "t_product", "description": "产品信息表"},
+            {"name": "t_person", "description": "人员信息表"},
+            {"name": "t_education_background", "description": "人员学历表"},
+            {"name": "t_qualification_certificate", "description": "人员证书表"},
+            {"name": "t_project", "description": "项目投标表"},
+            {"name": "t_contract", "description": "合同信息表"},
+            {"name": "t_project_person", "description": "项目人员表"},
+            {"name": "t_bid", "description": "投标文件表"},
+            {"name": "t_bid_catalogue", "description": "投标目录表"},
+            {"name": "t_bid_file_subentry", "description": "投标分项表"},
         ]
     }
 

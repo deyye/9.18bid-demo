@@ -1,12 +1,17 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import exc, update, delete
+from sqlalchemy import exc, update, delete, func
 from sqlalchemy.sql import text
 import uuid
 import logging
 from typing import List, Dict, Any, Type
 import datetime
 
-from ..models.business_models import Company 
+from ..models.business_models import (
+    Company, BusinessCertification, Patent, SoftwareCopyright,
+    Product, Person, EducationBackground, QualificationCertificate,
+    Project, Contract, ProjectPerson, Bid, BidCatalogue, BidFileSubentry
+)
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +25,24 @@ class TableService:
 
     def get_table_model(self, table_name: str) -> Type[Any] | None:
         """根据表名返回对应的 ORM 模型"""
-        if table_name == 't_company':
-            return Company
-        # elif table_name == 't_person':
-        #     return Person 
-        # ... 扩展其他表
-        return None
+        mapping = {
+            't_company': Company,
+            't_business_certification': BusinessCertification,
+            't_patent': Patent,
+            't_software_copyright': SoftwareCopyright,
+            't_product': Product,
+            't_person': Person,
+            't_education_background': EducationBackground,
+            't_qualification_certificate': QualificationCertificate,
+            't_project': Project,
+            't_contract': Contract,
+            't_project_person': ProjectPerson,
+            't_bid': Bid,
+            't_bid_catalogue': BidCatalogue,
+            't_bid_file_subentry': BidFileSubentry
+        }
+        
+        return mapping.get(table_name)
 
     # --- 通用查询逻辑 ---
     
