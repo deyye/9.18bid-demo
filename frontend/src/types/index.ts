@@ -13,7 +13,7 @@ export enum ProcessStep {
     DOCUMENT_ANALYSIS = 0,
     OUTLINE_EDIT = 1,
     CONTENT_GENERATE = 2,
-    EXPORT = 3,
+    CONTENT_FINALIZE = 3,
 }
 
 // 标书大纲章节数据模型

@@ -10,6 +10,14 @@ import starlette.middleware.cors
 from .config import settings
 from .routers import config, document, outline, content, doc_parser, generate_controller, knowledge
 
+from .db_config import Base, engine 
+
+try:
+    Base.metadata.create_all(bind=engine)
+    print("数据库表 (t_attachment) 初始化成功。")
+except Exception as e:
+    print(f"数据库初始化失败: {e}")
+
 # 创建FastAPI应用实例
 app = FastAPI(
     title=settings.app_name,

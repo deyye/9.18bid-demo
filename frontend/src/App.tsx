@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Steps, Button, Drawer, message, Space } from 'antd';
-import { SettingOutlined, DatabaseOutlined } from '@ant-design/icons'; 
+import { SettingOutlined, DatabaseOutlined, CheckCircleOutlined } from '@ant-design/icons'; // 引入 CheckCircleOutlined
 import { AppState, ProcessStep } from './types';
 import useAppState, { AppStateProvider } from './hooks/useAppState';
 import DocumentAnalysis from './pages/DocumentAnalysis';
@@ -38,6 +38,7 @@ const MainApp: React.FC = () => {
             case ProcessStep.DOCUMENT_ANALYSIS: path = '/analysis'; break;
             case ProcessStep.OUTLINE_EDIT: path = '/outline'; break;
             case ProcessStep.CONTENT_GENERATE: path = '/content'; break;
+            case ProcessStep.CONTENT_FINALIZE: path = '/content'; break // 终态仍然停留在内容编辑页
             default: path = '/analysis'; break;
         }
         setState({ currentStep: step });
@@ -52,12 +53,12 @@ const MainApp: React.FC = () => {
                     <h1 style={{ margin: 0, fontSize: '20px', color: '#1890ff' }}>智能标书写作助手</h1>
                 </div>
                 <Space>
-                    {/* 🟢 新增：知识库入口按钮 */}
+                    {/* 🟢 修改：将“企业知识库”更名为“知识与数据管理” */}
                     <Button 
                         icon={<DatabaseOutlined />} 
                         onClick={() => navigate('/knowledge')}
                     >
-                        企业知识库
+                        知识与数据管理
                     </Button>
                     
                     <Button 
@@ -81,7 +82,7 @@ const MainApp: React.FC = () => {
                                 { title: '智能文档解析', description: '上传并分析招标文件', disabled: false },
                                 { title: 'AI生成目录', description: '编辑并设置章节字数', disabled: !state.documentContent && !state.overview },
                                 { title: '内容自动生成', description: '编辑和优化内容', disabled: state.outline.length === 0 },
-                                { title: '一键导出', description: 'Word 文档导出', disabled: Object.keys(state.generatedContent).length === 0 },
+                                { title: '完成内容编辑', description: '进入最终审阅及导出', disabled: Object.keys(state.generatedContent).length === 0 }, // ⬅️ 修改了标题和描述
                             ]}
                         />
                     </Sider>
@@ -99,7 +100,7 @@ const MainApp: React.FC = () => {
                         <Route path="/" element={<DocumentAnalysis onNext={() => handleStepChange(ProcessStep.OUTLINE_EDIT)} />} />
                         <Route path="/analysis" element={<DocumentAnalysis onNext={() => handleStepChange(ProcessStep.OUTLINE_EDIT)} />} />
                         <Route path="/outline" element={<OutlineEdit onNext={() => handleStepChange(ProcessStep.CONTENT_GENERATE)} />} />
-                        <Route path="/content" element={<ContentEdit onNext={() => {}} />} />
+                        <Route path="/content" element={<ContentEdit onNext={() => handleStepChange(ProcessStep.CONTENT_FINALIZE)} />} /> // ⬅️ 修正 onNext
                         {/* 🟢 新增路由 */}
                         <Route path="/knowledge" element={<KnowledgeBase />} />
                     </Routes>

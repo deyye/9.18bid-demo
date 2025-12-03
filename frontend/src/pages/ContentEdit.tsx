@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Select, message, Spin, Typography, Layout as AntdLayout, Space, Empty, Tag } from 'antd';
-import { FileWordOutlined, ReloadOutlined, EditOutlined, LoadingOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { FileWordOutlined, ReloadOutlined, EditOutlined, LoadingOutlined, CheckCircleOutlined, DatabaseOutlined, SendOutlined } from '@ant-design/icons';
 import useAppState from '../hooks/useAppState';
-import { exportToWord } from '../services/api';
+import { exportToWord } from '../services/api'; // 保留导入，尽管暂时不用
+
 // 引入 ReactQuill 及样式
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -138,7 +139,7 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                 setSelectedChapterId(chapterOptions[0].value);
             }
         }
-    }, [state.generatedContent]);
+    }, [state.generatedContent, chapterOptions, selectedChapterId]);
 
     // 处理内容变更
     const handleContentChange = (content: string) => {
@@ -153,23 +154,32 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         }
     };
 
-    // 导出 Word
-    const handleExport = async () => {
-        setLoading(true);
+    // ⬅️ 原有的 handleExport 函数被移除
+
+    // 🟢 新增：处理“进入数据库管理”或“完成编辑”点击
+    const handleDatabaseManagement = () => {
+        message.info('已保存当前编辑内容。您可以从“知识与数据管理”页面进行高级查询。', 5);
+        // 调用 onNext 触发流程进入最终步骤 (ProcessStep.CONTENT_FINALIZE)
+        onNext(); 
+    };
+
+    const handleRegenerateChapter = () => {
+        message.info("重新生成功能需连接后端流式接口，当前仅演示编辑功能");
+    };
+
+    // 🟢 新增：单独的导出功能（依然保留，只是从主流程中移除）
+    const handleOneClickExport = async () => {
+         setLoading(true);
         try {
             message.info('正在打包导出 Word 文档...');
+            // 假设 exportToWord 已经导入
             await exportToWord(state.generatedContent, state.outline);
             message.success('导出成功！');
-            onNext();
         } catch (error) {
             message.error('导出失败，请重试');
         } finally {
             setLoading(false);
         }
-    };
-
-    const handleRegenerateChapter = () => {
-        message.info("重新生成功能需连接后端流式接口，当前仅演示编辑功能");
     };
 
     return (
@@ -226,14 +236,22 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                     >
                         AI 重写本章
                     </Button>
+                    {/* 🟢 移除导出按钮，替换为数据库管理按钮 */}
                     <Button 
                         type="primary" 
+                        icon={<DatabaseOutlined />} 
+                        onClick={handleDatabaseManagement}
+                        disabled={Object.keys(state.generatedContent).length === 0}
+                    >
+                        转到数据管理
+                    </Button>
+                    <Button 
                         icon={<FileWordOutlined />} 
-                        onClick={handleExport}
+                        onClick={handleOneClickExport}
                         loading={loading}
                         disabled={Object.keys(state.generatedContent).length === 0}
                     >
-                        导出完整标书
+                        导出 Word
                     </Button>
                 </Space>
             </div>
