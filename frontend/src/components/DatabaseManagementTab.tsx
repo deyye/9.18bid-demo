@@ -1,284 +1,314 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Card, Table, Button, Space, Select, message, Modal, Form, Input, Typography, Tag, Tooltip, Alert } from 'antd';
-import { DatabaseOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, PlusOutlined, EyeOutlined } from '@ant-design/icons';
-import { getAvailableTables, listCompanyRecords, deleteRecord, createCompanyRecord, updateCompanyRecord } from '../services/api';
+import React, { useState, useEffect } from 'react';
+import { Table, Button, Space, Modal, Form, Input, message, Popconfirm, Upload, Tag } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, SyncOutlined } from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
+import axios from 'axios';
 
-const { Option } = Select;
-const { Text } = Typography;
+const API_BASE_URL = 'http://localhost:8000';
 
-// 示例表结构，用于动态渲染表单和表格
-const TABLE_METADATA: Record<string, { label: string, fields: Array<{key: string, label: string, type: string, required: boolean}> }> = {
-    't_company': {
-        label: '公司基本信息表',
-        fields: [
-            { key: 'id', label: 'ID (主键)', type: 'string', required: false },
-            { key: 'company_name', label: '公司名称', type: 'string', required: true },
-            { key: 'parent_id', label: '父节点ID', type: 'string', required: false },
-            { key: 'address', label: '公司地址', type: 'string', required: false },
-            { key: 'created_time', label: '创建时间', type: 'datetime', required: false },
-            { key: 'updated_time', label: '修改时间', type: 'datetime', required: false },
-        ]
-    },
-    't_person': { // 占位示例
-        label: '企业人员信息表',
-        fields: [
-            { key: 'id', label: 'ID (主键)', type: 'string', required: false },
-            { key: 'person_name', label: '人员姓名', type: 'string', required: true },
-            { key: 'position', label: '岗位', type: 'string', required: false },
-        ]
-    }
-    // ... 更多表
-};
+interface DatabaseRecord {
+    id: string;
+    name: string;
+    description: string;
+    file_path: string;
+    chunk_count: number;
+    created_at: string;
+    updated_at: string;
+    status: string;
+}
 
+interface FormValues {
+    name: string;
+    description: string;
+    file?: any;
+}
 
 const DatabaseManagementTab: React.FC = () => {
-    const [availableTables, setAvailableTables] = useState<Array<{ name: string, description: string }>>([]);
-    const [selectedTable, setSelectedTable] = useState<string>('t_company');
-    const [tableData, setTableData] = useState<any[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [total, setTotal] = useState(0);
-    const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
-    
-    // Modal 状态
-    const [isModalVisible, setIsModalVisible] = useState(false);
-    const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
-    const [editingRecord, setEditingRecord] = useState<any | null>(null);
+    const [databases, setDatabases] = useState<DatabaseRecord[]>([]);
+    const [loading, setLoading] = useState<boolean>(false);
+    const [modalVisible, setModalVisible] = useState<boolean>(false);
+    const [editingRecord, setEditingRecord] = useState<DatabaseRecord | null>(null);
     const [form] = Form.useForm();
+    const [uploading, setUploading] = useState<boolean>(false);
 
-    useEffect(() => {
-        fetchAvailableTables();
-    }, []);
-
-    useEffect(() => {
-        if (selectedTable) {
-            fetchData(1, pagination.pageSize, selectedTable);
-        }
-    }, [selectedTable]);
-
-    const fetchAvailableTables = async () => {
-        try {
-            const res = await getAvailableTables();
-            setAvailableTables(res.tables);
-            // 默认选中第一个可管理的表
-            if (res.tables.length > 0 && res.tables.find((t: any) => t.name === 't_company')) {
-                 setSelectedTable('t_company');
-            } else if (res.tables.length > 0) {
-                 setSelectedTable(res.tables[0].name);
-            }
-        } catch (e) {
-            message.error("获取可用表列表失败");
-        }
-    };
-
-    const fetchData = async (page: number, pageSize: number, tableName: string) => {
+    // 加载数据库列表
+    const loadDatabases = async () => {
         setLoading(true);
         try {
-            const offset = (page - 1) * pageSize;
-            // ⚠️ 注意：这里需要根据表名调用不同的 API 函数，目前仅实现 t_company 的列表
-            // 未来应扩展 listData 通用函数或使用 switch case
-            const res = await listCompanyRecords(pageSize, offset); 
-            setTableData(res.items);
-            setTotal(res.total);
-            setPagination({ current: page, pageSize });
-        } catch (e) {
-            message.error(`获取表 ${tableName} 数据失败`);
+            const response = await axios.get(`${API_BASE_URL}/api/knowledge/list`);
+            setDatabases(response.data.databases || []);
+        } catch (error) {
+            message.error('加载知识库列表失败');
+            console.error(error);
         } finally {
             setLoading(false);
         }
     };
-    
-    // --- 增删改查事件 ---
-    
-    const handleCreate = () => {
-        setModalMode('create');
+
+    useEffect(() => {
+        loadDatabases();
+    }, []);
+
+    // 打开新建/编辑对话框
+    const handleAdd = () => {
         setEditingRecord(null);
         form.resetFields();
-        setIsModalVisible(true);
+        setModalVisible(true);
     };
 
-    const handleEdit = (record: any) => {
-        setModalMode('edit');
+    const handleEdit = (record: DatabaseRecord) => {
         setEditingRecord(record);
-        // 自动设置表单值
-        form.setFieldsValue(record);
-        setIsModalVisible(true);
+        form.setFieldsValue({
+            name: record.name,
+            description: record.description,
+        });
+        setModalVisible(true);
     };
 
-    const handleDelete = (recordId: string) => {
-        Modal.confirm({
-            title: `确认删除 ${selectedTable} 中 ID 为 "${recordId}" 的记录?`,
-            content: '此操作不可恢复。',
-            okText: '删除',
-            okType: 'danger',
-            cancelText: '取消',
-            onOk: async () => {
-                try {
-                    await deleteRecord(selectedTable, recordId);
-                    message.success('删除成功');
-                    fetchData(pagination.current, pagination.pageSize, selectedTable);
-                } catch (e: any) {
-                    message.error(`删除失败: ${e.message || '未知错误'}`);
-                }
-            }
-        });
+    // 删除知识库
+    const handleDelete = async (id: string) => {
+        try {
+            await axios.delete(`${API_BASE_URL}/api/knowledge/delete/${id}`);
+            message.success('删除成功');
+            loadDatabases();
+        } catch (error) {
+            message.error('删除失败');
+            console.error(error);
+        }
     };
-    
-    const handleModalOk = async () => {
+
+    // 提交表单
+    const handleSubmit = async () => {
         try {
             const values = await form.validateFields();
-            setLoading(true);
-            
-            if (modalMode === 'create') {
-                await createCompanyRecord(values);
-                message.success('新增记录成功');
-            } else if (modalMode === 'edit' && editingRecord) {
-                await updateCompanyRecord(editingRecord.id, values);
-                message.success('更新记录成功');
+            setUploading(true);
+
+            if (editingRecord) {
+                // 编辑模式
+                await axios.put(`${API_BASE_URL}/api/knowledge/update/${editingRecord.id}`, {
+                    name: values.name,
+                    description: values.description,
+                });
+                message.success('更新成功');
+            } else {
+                // 新建模式 - 上传文件
+                if (!values.file || values.file.fileList.length === 0) {
+                    message.error('请选择要上传的文件');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', values.file.fileList[0].originFileObj);
+                formData.append('name', values.name);
+                formData.append('description', values.description);
+
+                await axios.post(`${API_BASE_URL}/api/knowledge/upload`, formData, {
+                    headers: {
+                        'Content-Type': 'multipart/form-data',
+                    },
+                });
+                message.success('上传成功');
             }
 
-            setIsModalVisible(false);
+            setModalVisible(false);
             form.resetFields();
-            // 刷新当前页数据
-            fetchData(pagination.current, pagination.pageSize, selectedTable);
-            
-        } catch (e) {
-            message.error('操作失败，请检查输入或联系管理员');
+            loadDatabases();
+        } catch (error) {
+            message.error('操作失败');
+            console.error(error);
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    // 重新索引
+    const handleReindex = async (id: string) => {
+        try {
+            setLoading(true);
+            await axios.post(`${API_BASE_URL}/api/knowledge/reindex/${id}`);
+            message.success('重新索引成功');
+            loadDatabases();
+        } catch (error) {
+            message.error('重新索引失败');
+            console.error(error);
         } finally {
             setLoading(false);
         }
     };
 
-    // --- 表格列渲染 ---
-    
-    const columns = useMemo(() => {
-        if (!TABLE_METADATA[selectedTable]) {
-            // 如果表元数据不存在，则尝试从第一条数据中动态生成列
-            if (tableData.length === 0) return [];
-            return Object.keys(tableData[0]).map(key => ({
-                title: key,
-                dataIndex: key,
-                key: key,
-                render: (text: any) => <Tooltip title={String(text)}>{String(text).length > 20 ? `${String(text).substring(0, 20)}...` : String(text)}</Tooltip>
-            }));
-        }
-
-        const baseColumns = TABLE_METADATA[selectedTable].fields
-            .filter(field => field.key !== 'id') // 隐藏 ID 字段，但在操作中显示
-            .map(field => ({
-                title: field.label,
-                dataIndex: field.key,
-                key: field.key,
-                render: (text: any) => {
-                    const content = String(text);
-                    if (field.type === 'datetime') return <Tag color="blue">{content}</Tag>;
-                    return <Tooltip title={content}>{content.length > 20 ? `${content.substring(0, 20)}...` : content}</Tooltip>;
-                }
-            }));
-            
-        // 添加操作列
-        baseColumns.push({
+    // 表格列定义
+    const columns: ColumnsType<DatabaseRecord> = [
+        {
+            title: '名称',
+            dataIndex: 'name',
+            key: 'name',
+            width: 200,
+        },
+        {
+            title: '描述',
+            dataIndex: 'description',
+            key: 'description',
+            ellipsis: true,
+        },
+        {
+            title: '状态',
+            dataIndex: 'status',
+            key: 'status',
+            width: 100,
+            render: (status: string) => {
+                const statusConfig: { [key: string]: { color: string; text: string } } = {
+                    ready: { color: 'green', text: '就绪' },
+                    processing: { color: 'blue', text: '处理中' },
+                    error: { color: 'red', text: '错误' },
+                };
+                const config = statusConfig[status] || { color: 'default', text: status };
+                return <Tag color={config.color}>{config.text}</Tag>;
+            },
+        },
+        {
+            title: '文档数量',
+            dataIndex: 'chunk_count',
+            key: 'chunk_count',
+            width: 120,
+            render: (count: number) => count || 0,
+        },
+        {
+            title: '创建时间',
+            dataIndex: 'created_at',
+            key: 'created_at',
+            width: 180,
+            render: (text: string) => new Date(text).toLocaleString('zh-CN'),
+        },
+        {
             title: '操作',
             key: 'action',
-            width: 150,
-            render: (_: any, record: any, _index: number) => ( 
+            width: 250,
+            fixed: 'right',
+            render: (_, record) => (
                 <Space size="small">
-                    <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
-                    <Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)}>删除</Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => handleEdit(record)}
+                    >
+                        编辑
+                    </Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        icon={<SyncOutlined />}
+                        onClick={() => handleReindex(record.id)}
+                        disabled={record.status === 'processing'}
+                    >
+                        重建索引
+                    </Button>
+                    <Popconfirm
+                        title="确定要删除这个知识库吗?"
+                        onConfirm={() => handleDelete(record.id)}
+                        okText="确定"
+                        cancelText="取消"
+                    >
+                        <Button
+                            type="link"
+                            danger
+                            size="small"
+                            icon={<DeleteOutlined />}
+                        >
+                            删除
+                        </Button>
+                    </Popconfirm>
                 </Space>
-            )
-        });
-        
-        // 增加 ID 预览列
-        baseColumns.unshift({
-             title: 'ID',
-             dataIndex: 'id',
-             key: 'id',
-             width: 100,
-             render: (text: string) => <Tag color="default"><Tooltip title={text}>{text.substring(0, 4)}...</Tooltip></Tag>
-        })
-
-        return baseColumns;
-    }, [selectedTable, tableData]);
-
-    const handleTableChange = (table: string) => {
-        setSelectedTable(table);
-        setTableData([]);
-    };
-    
-    // --- Modal 表单渲染 ---
-
-    const renderFormItems = () => {
-        const metadata = TABLE_METADATA[selectedTable];
-        if (!metadata) return <Alert message="请选择一个可管理的表" type="warning" />;
-        
-        return metadata.fields
-            .filter(f => f.key !== 'id' && !f.key.startsWith('created_') && !f.key.startsWith('updated_')) // 隐藏ID和审计字段
-            .map(field => (
-                <Form.Item
-                    key={field.key}
-                    label={field.label}
-                    name={field.key}
-                    rules={[{ required: field.required, message: `请输入 ${field.label}` }]}
-                >
-                    <Input placeholder={`请输入 ${field.label}`} disabled={field.type === 'datetime'} />
-                </Form.Item>
-            ));
-    };
+            ),
+        },
+    ];
 
     return (
-        <Card 
-            title={<Space><DatabaseOutlined /><span>结构化数据管理</span></Space>} 
-            style={{ minHeight: '80vh' }}
-            extra={
+        <div style={{ padding: '24px' }}>
+            <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between' }}>
+                <h2>知识库管理</h2>
                 <Space>
-                    <Select value={selectedTable} onChange={handleTableChange} style={{ width: 200 }}>
-                        {availableTables.map(table => (
-                            <Option key={table.name} value={table.name}>
-                                {table.description} ({table.name})
-                            </Option>
-                        ))}
-                    </Select>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增记录</Button>
-                    <Button icon={<ReloadOutlined />} onClick={() => fetchData(pagination.current, pagination.pageSize, selectedTable)}>刷新</Button>
+                    <Button icon={<SyncOutlined />} onClick={loadDatabases}>
+                        刷新
+                    </Button>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+                        新建知识库
+                    </Button>
                 </Space>
-            }
-        >
-            {/* 修正：这里使用了 Alert 组件 */}
-            <Alert 
-                message={<Text strong>当前表: {TABLE_METADATA[selectedTable]?.label || selectedTable}</Text>} 
-                description={<Text type="secondary">本界面仅演示 `t_company` 表的增删改查功能。如需管理其他表，请在后端 `table_service.py` 和前端 `DatabaseManagementTab.tsx` 中扩展相应的 ORM 模型和 API 调用。</Text>}
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-            />
-            
+            </div>
+
             <Table
                 columns={columns}
-                dataSource={tableData}
+                dataSource={databases}
                 rowKey="id"
                 loading={loading}
                 pagination={{
-                    current: pagination.current,
-                    pageSize: pagination.pageSize,
-                    total: total,
-                    onChange: (page, pageSize) => fetchData(page, pageSize, selectedTable),
-                    showTotal: (total) => `共 ${total} 条`
+                    pageSize: 10,
+                    showSizeChanger: true,
+                    showTotal: (total) => `共 ${total} 条记录`,
                 }}
+                scroll={{ x: 1200 }}
             />
 
-            <Modal 
-                title={modalMode === 'create' ? `新增 ${TABLE_METADATA[selectedTable]?.label || selectedTable} 记录` : `编辑 ${editingRecord?.id.substring(0, 8)}... 记录`} 
-                open={isModalVisible} 
-                onOk={handleModalOk} 
-                onCancel={() => setIsModalVisible(false)} 
-                confirmLoading={loading}
-                destroyOnClose
+            <Modal
+                title={editingRecord ? '编辑知识库' : '新建知识库'}
+                open={modalVisible}
+                onOk={handleSubmit}
+                onCancel={() => {
+                    setModalVisible(false);
+                    form.resetFields();
+                }}
+                confirmLoading={uploading}
+                width={600}
             >
-                <Form form={form} layout="vertical" initialValues={editingRecord}>
-                    {renderFormItems()}
+                <Form
+                    form={form}
+                    layout="vertical"
+                    initialValues={{
+                        name: '',
+                        description: '',
+                    }}
+                >
+                    <Form.Item
+                        label="知识库名称"
+                        name="name"
+                        rules={[{ required: true, message: '请输入知识库名称' }]}
+                    >
+                        <Input placeholder="请输入知识库名称" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="描述"
+                        name="description"
+                        rules={[{ required: true, message: '请输入描述' }]}
+                    >
+                        <Input.TextArea rows={4} placeholder="请输入知识库描述" />
+                    </Form.Item>
+
+                    {!editingRecord && (
+                        <Form.Item
+                            label="上传文件"
+                            name="file"
+                            rules={[{ required: true, message: '请上传文件' }]}
+                        >
+                            <Upload
+                                accept=".pdf,.doc,.docx,.txt"
+                                maxCount={1}
+                                beforeUpload={() => false}
+                            >
+                                <Button icon={<UploadOutlined />}>选择文件</Button>
+                            </Upload>
+                        </Form.Item>
+                    )}
+
+                    {editingRecord && (
+                        <Form.Item label="文件路径">
+                            <Input value={editingRecord.file_path} disabled />
+                        </Form.Item>
+                    )}
                 </Form>
             </Modal>
-        </Card>
+        </div>
     );
 };
 

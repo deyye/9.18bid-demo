@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Type
 import datetime
 
 from ..models.business_models import Company 
-from ..models import Attachment
 
 logger = logging.getLogger(__name__)
 

@@ -8,12 +8,10 @@ import fastapi.middleware.cors
 import starlette.middleware.cors
 
 from .config import settings
-# 🟢 导入新路由
 from .routers import config, document, outline, content, doc_parser, generate_controller, knowledge, data_manager
 
-# 🟢 DB 初始化相关导入
 from .db_config import Base, engine 
-from .models import Attachment # 附件表
+from .db_models import Attachment # 附件表
 from .models.business_models import Company 
 
 try:
