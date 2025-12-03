@@ -6,6 +6,9 @@ from ..services.qwen_api import QwenService
 from ..services.rag_service import get_rag_service
 from ..utils.config_manager import config_manager
 import json, re
+import os
+from ..db_config import get_db
+from ..services.table_service import TableService
 
 router = APIRouter(prefix="/api/content", tags=["内容管理"])
 
@@ -63,7 +66,8 @@ def build_bidding_user_prompt(
     desc: str,
     parent_text: str,
     target_word_count: int,
-    rag_context: str = ""
+    rag_context: str = "",
+    db_context: str = ""
 ) -> str:
     """构建符合招投标规范的用户提示词"""
     
@@ -97,32 +101,23 @@ def build_bidding_user_prompt(
 - 数据量化：关键指标必须数字化"""
 
     # 构建RAG上下文提示
-    rag_section = ""
-    if rag_context:
-        rag_section = f"""
-### 📚 企业知识库参考资料
-
-**重要**：以下资料来自企业内部知识库，请优先引用其中的：
-- 具体参数、配置、标准
-- 成功案例、项目数据
-- 技术架构、工具清单
-- 管理流程、模板文档
-
-{rag_context}
-
-⚠️ 引用时请确保：
-1. 数据准确性（直接引用，不要修改参数）
-2. 案例相关性（选择与当前章节匹配的案例）
-3. 标注来源（如提及"根据公司XXX项目经验"）
-"""
+    if db_context or rag_context:
+        context_section = "### 📚 企业内部参考资料（动静结合）\n\n"
+        
+        if db_context:
+            context_section += f"**【数据库-历史业绩事实】** (数据绝对准确，请直接引用)：\n{db_context}\n\n"
+            
+        if rag_context:
+            context_section += f"**【知识库-相关文档细节】** (基于历史项目文档检索)：\n{rag_context}\n\n"
+            
+        context_section += "⚠️ **引用要求**：请将上述历史项目的参数、金额、时间等事实自然融入到方案中，作为公司实力的佐证。\n"
 
     # 主提示词
     return f"""
 # 招投标文档撰写任务
 
 ## 一、项目背景与招标需求
-{project_overview[:1000]}
-{"..." if len(project_overview) > 1000 else ""}
+{project_overview}
 
 ## 二、当前章节定位
 - **章节编号**：{chapter_id}
@@ -130,7 +125,7 @@ def build_bidding_user_prompt(
 - **章节描述**：{desc}
 - **上级章节**：{parent_text}
 
-{rag_section}
+{context_section}
 
 ## 三、撰写要求
 
@@ -306,50 +301,75 @@ async def generate_chapter_content_stream(
         chapter_id = chapter.get("id", "unknown")
         title = chapter.get("title", "")
         desc = chapter.get("description", "")
-        
-        target_word_count = chapter.get("wordCount") or chapter.get("word_count")
-        try:
-            target_word_count = int(target_word_count)
-        except (TypeError, ValueError):
-            target_word_count = 1000 
-
-        # 2. 构建上下文文本
-        parent_chapters = request.parent_chapters or []
-        sibling_chapters = request.sibling_chapters or []
-        parent_text = " > ".join([p['title'] for p in parent_chapters]) or "无(顶级章节)"
-
-        # 3. 🔍 RAG 检索增强
-        rag_query = f"撰写章节 '{title}' (内容概要: {desc}) 的相关企业资料和历史案例，项目要求：{project_overview[:100]}..."
+        # 2. 🟢 初始化 DB 和 RAG 服务
+        db_gen = get_db()
+        db = next(db_gen) # 手动获取 session
+        table_service = TableService(db)
         rag_service = get_rag_service()
-        retrieved_docs = rag_service.search(rag_query, n_results=5) # 检索 top 5 知识片段
         
+        db_context_str = ""
         rag_context_str = ""
-        if retrieved_docs:
-            # 格式化检索结果，将其 source 和 content 整合
-            rag_context_str = "\n".join([f"- 【来源:{doc.get('source', 'unknown')}】片段: {doc['content']}" for doc in retrieved_docs])
-            rag_context_str = f"\n### 💡 参考资料 (企业知识库)\n请优先基于以下企业内部资料撰写，确保参数和案例的准确性：\n{rag_context_str}\n"
-        else:
-            rag_context_str = "\n### 💡 参考资料 (企业知识库)\n未检索到相关知识片段，请基于项目概述和章节要求进行生成。\n"
-
-        # 3. 动态构建 Prompt (将 RAG 结果注入 Prompt)
-        # length_instruction = ""
-        # if target_word_count >= 2000:
-        #     length_instruction = f"【⭐⭐⭐ 篇幅要求：极详】目标字数：{target_word_count}字以上。策略：必须深度扩写！请增加技术细节、流程步骤、数据表格。"
-        # elif target_word_count <= 500:
-        #     length_instruction = f"【⭐ 篇幅要求：精简】目标字数：{target_word_count}字左右。策略：语言精练，直击要点。"
-        # else:
-        #     length_instruction = f"【⭐⭐ 篇幅要求：适中】目标字数：{target_word_count}字左右。内容充实，逻辑清晰。"
+        
+        try:
+            # 3. 🟢 动静结合检索逻辑
+            # 策略：如果章节标题包含"业绩"、"案例"、"经验"等词，触发数据库检索
+            keywords = ["业绩", "案例", "项目", "经验", "实施"]
+            is_project_chapter = any(k in title for k in keywords)
             
-        # 4. 构建专业招投标提示词
+            if is_project_chapter:
+                # 3.1 静态检索：查数据库
+                # 提取关键词作为搜索条件 (简单起见使用标题前4个字，实际可用LLM提取关键词)
+                search_kw = title[:4] 
+                search_result = table_service.search_projects_and_attachments(search_kw)
+                
+                projects = search_result.get("projects", [])
+                file_sources = search_result.get("file_sources", [])
+                
+                # 构建数据库上下文
+                if projects:
+                    db_context_str = "\n".join([
+                        f"- 项目名称：{p['name']} | 金额：{p['amount']}元 | 时间：{p['date']} | 客户：{p['company']}"
+                        for p in projects
+                    ])
+                
+                # 3.2 动态检索：查知识库 (限定在关联文件中)
+                # 如果数据库找到了关联文件，就只搜这些文件；否则搜全库
+                rag_filter = {"source": {"$in": file_sources}} if file_sources else None
+                
+                # 使用章节描述或标题作为查询
+                query_text = f"{title} {desc}"
+                retrieved_docs = rag_service.search(query_text, n_results=3, filter=rag_filter)
+                
+                if retrieved_docs:
+                    rag_context_str = "\n".join([f"- (来源:{doc['source']}) {doc['content']}" for doc in retrieved_docs])
+            
+            else:
+                # 普通章节：仅进行通用知识库检索 (不加 filter)
+                query_text = f"{title} {desc} {request.project_overview[:50]}"
+                retrieved_docs = rag_service.search(query_text, n_results=3)
+                if retrieved_docs:
+                    rag_context_str = "\n".join([f"- {doc['content']}" for doc in retrieved_docs])
+
+        finally:
+            db.close() # 确保关闭连接
+            
+        # 4. 构建 Prompt
+        target_word_count = request.chapter.get("word_count", 1000)
+        try: target_word_count = int(target_word_count)
+        except: target_word_count = 1000
+
+        parent_text = " > ".join([p['title'] for p in (request.parent_chapters or [])])
+
         system_prompt = build_bidding_system_prompt()
         user_prompt = build_bidding_user_prompt(
-            project_overview=project_overview,
-            chapter_id=chapter_id,
+            project_overview=request.project_overview,
+            chapter_id=request.chapter.get("id", ""),
             title=title,
             desc=desc,
             parent_text=parent_text,
             target_word_count=target_word_count,
-            rag_context=rag_context_str
+            rag_context=rag_context_str, # 传入 RAG 上下文
+            db_context=db_context_str    # 传入 DB 上下文
         )
 
         messages = [

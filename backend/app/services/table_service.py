@@ -1,10 +1,11 @@
+import os
 from sqlalchemy.orm import Session
-from sqlalchemy import exc, update, delete, func
-from sqlalchemy.sql import text
+from sqlalchemy import exc, update, delete, func, or_
 import uuid
 import logging
 from typing import List, Dict, Any, Type
 import datetime
+from fastapi import HTTPException
 
 from ..models.business_models import (
     Company, BusinessCertification, Patent, SoftwareCopyright,
@@ -12,6 +13,7 @@ from ..models.business_models import (
     Project, Contract, ProjectPerson, Bid, BidCatalogue, BidFileSubentry
 )
 from ..db_models import Attachment
+from ..models.business_models import Company, Project, Contract # 假设的主要搜索项目
 
 from fastapi import HTTPException
 
@@ -131,3 +133,56 @@ class TableService:
         result = self.db.query(Model).filter(Model.id == record_id).delete()
         self.db.commit()
         return result > 0
+    
+    def search_projects_and_attachments(self, keyword: str) -> Dict[str, Any]:
+        """
+        1. 搜索相关的项目 (Static)
+        2. 查找这些项目关联的附件 (Link)
+        """
+        if not keyword:
+            return {"projects": [], "files": []}
+
+        # 1. 搜索项目 (T_PROJECT)
+        try:
+            projects = self.db.query(Project).filter(
+                or_(
+                    Project.project_name.like(f"%{keyword}%"),
+                    Project.bid_company_name.like(f"%{keyword}%")
+                )
+            ).limit(3).all() # 限制只取最相关的3个项目
+        except Exception:
+            return {"projects": [], "files": []}
+
+        project_results = []
+        related_external_ids = []
+
+        for p in projects:
+            # 格式化项目核心数据
+            p_data = {
+                "id": p.id,
+                "name": p.project_name,
+                "amount": float(p.win_amount) if p.win_amount else 0,
+                "date": str(p.bid_time) if p.bid_time else "未知",
+                "company": p.bid_company_name
+            }
+            project_results.append(p_data)
+            related_external_ids.append(p.id)
+
+        # 2. 查找关联附件 (T_ATTACHMENT)
+        # 假设 t_attachment.external_id 存储的是项目ID
+        files = []
+        if related_external_ids:
+            attachments = self.db.query(Attachment).filter(
+                Attachment.external_id.in_(related_external_ids)
+            ).all()
+            
+            for att in attachments:
+                # 提取文件名作为 RAG 的 source
+                # 假设 file_url 是 /uploads/filename.pdf
+                filename = os.path.basename(att.file_url)
+                files.append(filename)
+
+        return {
+            "projects": project_results, # 静态数据：用于直接展示
+            "file_sources": files        # 关联文件：用于 RAG 过滤
+        }
