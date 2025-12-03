@@ -8,13 +8,18 @@ import fastapi.middleware.cors
 import starlette.middleware.cors
 
 from .config import settings
-from .routers import config, document, outline, content, doc_parser, generate_controller, knowledge
+# 🟢 导入新路由
+from .routers import config, document, outline, content, doc_parser, generate_controller, knowledge, data_manager
 
+# 🟢 DB 初始化相关导入
 from .db_config import Base, engine 
+from .models import Attachment # 附件表
+from .models.business_models import Company 
 
 try:
+    # 这将创建 t_attachment 和 t_company 表
     Base.metadata.create_all(bind=engine)
-    print("数据库表 (t_attachment) 初始化成功。")
+    print("数据库表 (t_attachment, t_company, etc.) 初始化成功。")
 except Exception as e:
     print(f"数据库初始化失败: {e}")
 
@@ -43,6 +48,7 @@ app.include_router(outline.router)
 app.include_router(content.router)
 app.include_router(generate_controller.router)
 app.include_router(knowledge.router)
+app.include_router(data_manager.router)
 
 # 健康检查端点
 @app.get("/health")

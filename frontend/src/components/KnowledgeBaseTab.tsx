@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Upload, Button, Select, message, Typography, Space, Input, List, Tag, Alert, Modal, Table, Tabs, notification, Progress, Tooltip } from 'antd';
-// ✅ 引入 EyeOutlined 图标
 import { DeleteOutlined, SearchOutlined, CloudUploadOutlined, ReadOutlined, ReloadOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { RcFile } from 'antd/es/upload';
@@ -10,7 +9,8 @@ const { Title, Text, Paragraph } = Typography;
 const { Dragger } = Upload;
 const { Option } = Select;
 
-const KnowledgeBase: React.FC = () => {
+// 🟢 修改：不再是一个完整的 Page，而是一个 Tab 组件
+const KnowledgeBaseTab: React.FC = () => {
     const [uploading, setUploading] = useState(false);
     const [docType, setDocType] = useState('general');
     const [searchQuery, setSearchQuery] = useState('');
@@ -23,7 +23,7 @@ const KnowledgeBase: React.FC = () => {
     const [total, setTotal] = useState(0);
     const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
 
-    // ✅ 新增：查看详情弹窗状态
+    // 查看详情弹窗状态
     const [viewModalOpen, setViewModalOpen] = useState(false);
     const [viewContent, setViewContent] = useState('');
     const [viewSource, setViewSource] = useState('');
@@ -68,7 +68,6 @@ const KnowledgeBase: React.FC = () => {
         });
     };
 
-    // ✅ 新增：处理查看点击
     const handleViewContent = (record: any) => {
         setViewContent(record.content);
         setViewSource(record.source);
@@ -110,7 +109,6 @@ const KnowledgeBase: React.FC = () => {
             width: 160,
             render: (_: any, record: any) => (
                 <Space>
-                    {/* ✅ 新增查看按钮 */}
                     <Button 
                         type="link" 
                         size="small" 
@@ -130,6 +128,7 @@ const KnowledgeBase: React.FC = () => {
     ];
 
     const customRequest = async (options: any) => {
+        // ... (上传逻辑不变)
         const { file, onSuccess, onError } = options;
         const rcFile = file as RcFile;
         const key = `upload-${rcFile.uid}`;
@@ -231,7 +230,8 @@ const KnowledgeBase: React.FC = () => {
         setSearching(true);
         try {
             const res = await searchKnowledge(searchQuery);
-            const results = Array.isArray(res.results) ? res.results : [res.results];
+            // 修正：后端返回的是 { query: string, results: List<Dict> }，results 是数组
+            const results = Array.isArray(res.results) ? res.results.map((r: any) => r.content) : [res.results]; 
             setSearchResults(results);
             if (results.length === 0 || !results[0]) message.info('未检索到相关内容');
         } catch (e) {
@@ -242,15 +242,14 @@ const KnowledgeBase: React.FC = () => {
     };
 
     return (
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: 24 }}>
+        <>
             {contextHolder}
 
             <Space direction="vertical" size="large" style={{ width: '100%' }}>
                 
                 <div style={{ textAlign: 'center', marginBottom: 10 }}>
-                    <Title level={2}><ReadOutlined /> 企业知识库管理</Title>
                     <Paragraph type="secondary">
-                        管理企业私有知识库，支持 PDF/Word 上传、自动切片、向量检索与内容预览。
+                        管理企业非结构化知识库，支持 PDF/Word 上传、自动切片、向量检索与内容预览。
                     </Paragraph>
                 </div>
 
@@ -351,7 +350,6 @@ const KnowledgeBase: React.FC = () => {
 
             </Space>
 
-            {/* ✅ 新增：查看完整内容的模态框 */}
             <Modal
                 title={
                     <Space>
@@ -385,8 +383,9 @@ const KnowledgeBase: React.FC = () => {
                     {viewContent}
                 </div>
             </Modal>
-        </div>
+        </>
     );
 };
 
-export default KnowledgeBase;
+// 🟢 导出为 KnowledgeBaseTab
+export default KnowledgeBaseTab;

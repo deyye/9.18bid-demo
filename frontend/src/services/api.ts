@@ -465,3 +465,59 @@ export async function deleteKnowledgeFile(source: string): Promise<void> {
     });
     if (!response.ok) throw new Error('删除失败');
 }
+
+// ----------------------------------------------------
+// 7. 结构化数据管理 API (新增)
+// ----------------------------------------------------
+
+export async function getAvailableTables(): Promise<{ tables: Array<{ name: string, description: string }> }> {
+    const response = await fetch(`${API_BASE_URL}/data/tables`);
+    if (!response.ok) throw new Error('获取可用表列表失败');
+    return await response.json();
+}
+
+// --- t_company CRUD 示例 ---
+
+export async function listCompanyRecords(limit: number = 10, offset: number = 0): Promise<{ total: number, items: any[] }> {
+    // ⚠️ 仅为示例：这里只查询 t_company 表
+    const response = await fetch(`${API_BASE_URL}/data/t_company/list?limit=${limit}&offset=${offset}`);
+    if (!response.ok) throw new Error('查询公司记录失败');
+    return await response.json();
+}
+
+export async function createCompanyRecord(data: any): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/data/t_company`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '新增记录失败');
+    }
+    return await response.json();
+}
+
+export async function updateCompanyRecord(id: string, data: any): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/data/t_company/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '更新记录失败');
+    }
+    return await response.json();
+}
+
+export async function deleteRecord(tableName: string, recordId: string): Promise<{ success: boolean }> {
+    const response = await fetch(`${API_BASE_URL}/data/${tableName}/${recordId}`, {
+        method: 'DELETE',
+    });
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '删除记录失败');
+    }
+    return await response.json();
+}
