@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button, Select, message, Spin, Typography, Layout as AntdLayout, Space, Empty, Tag, Modal, Input } from 'antd';
 import { FileWordOutlined, ReloadOutlined, EditOutlined, LoadingOutlined, CheckCircleOutlined, DatabaseOutlined, SendOutlined } from '@ant-design/icons';
 import useAppState from '../hooks/useAppState';
-import { exportToWord, regenerateSingleChapter } from '../services/api'; // 保留导入，尽管暂时不用
+import { exportToWord, regenerateSingleChapter } from '../services/api';
 
 // 引入 ReactQuill 及样式
 import ReactQuill from 'react-quill';
@@ -84,12 +84,12 @@ const editorStyles = `
 const modules = {
     toolbar: [
         [{ 'header': [1, 2, 3, false] }],
-        ['bold', 'italic', 'underline', 'strike'],        // 字体样式
-        [{ 'color': [] }, { 'background': [] }],          // 颜色
-        [{ 'list': 'ordered'}, { 'list': 'bullet' }],     // 列表
-        [{ 'indent': '-1'}, { 'indent': '+1' }],          // 缩进
-        [{ 'align': [] }],                                // 对齐
-        ['clean']                                         // 清除格式
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ 'color': [] }, { 'background': [] }],
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+        [{ 'indent': '-1'}, { 'indent': '+1' }],
+        [{ 'align': [] }],
+        ['clean']
     ],
 };
 
@@ -110,15 +110,18 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
     const [regenPrompt, setRegenPrompt] = useState('');
     const [isRegenerating, setIsRegenerating] = useState(false);
 
-    // 获取当前章节内容（如果没有则为空字符串）
+    // 🟢 核心修复1：使用 ref 缓存流式内容，避免频繁渲染
+    const streamBufferRef = useRef<string>('');
+    const updateTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+    // 获取当前章节内容
     const currentContent = selectedChapterId ? (state.generatedContent[selectedChapterId] || '') : '';
 
     // 递归获取所有章节选项
     const getAllChapters = (outline: any[], level = 0): { value: string; label: string }[] => {
         let chapters: { value: string; label: string }[] = [];
         outline.forEach((item) => {
-            const prefix = '\u00A0\u00A0'.repeat(level * 2); // 使用空格缩进显示层级
-            // ✅ 修正点：将 item.id (章节号) 拼接到 label 中
+            const prefix = '\u00A0\u00A0'.repeat(level * 2);
             chapters.push({ 
                 value: item.id, 
                 label: `${prefix}${item.id} ${item.title}` 
@@ -133,10 +136,9 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
 
     const chapterOptions = getAllChapters(state.outline);
 
-    // 自动选择第一个有内容的章节（如果未选择）
+    // 自动选择第一个有内容的章节
     useEffect(() => {
         if (!selectedChapterId && chapterOptions.length > 0) {
-            // 优先找已经生成了内容的章节
             const firstGenerated = chapterOptions.find(opt => state.generatedContent[opt.value]);
             if (firstGenerated) {
                 setSelectedChapterId(firstGenerated.value);
@@ -145,6 +147,15 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
             }
         }
     }, [state.generatedContent, chapterOptions, selectedChapterId]);
+
+    // 🟢 核心修复2：清理定时器
+    useEffect(() => {
+        return () => {
+            if (updateTimerRef.current) {
+                clearTimeout(updateTimerRef.current);
+            }
+        };
+    }, []);
 
     // 处理内容变更
     const handleContentChange = (content: string) => {
@@ -174,11 +185,11 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
     // 🟢 点击"AI 重写本章"按钮
     const handleRegenerateClick = () => {
         if (!selectedChapterId) return;
-        setRegenPrompt(''); // 重置输入框
+        setRegenPrompt('');
         setIsRegenModalOpen(true);
     };
 
-    // 🟢 确认重写
+    // 🟢 核心修复3：优化的确认重写函数
     const handleRegenerateConfirm = async () => {
         if (!selectedChapterId) return;
         
@@ -189,7 +200,11 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         }
 
         setIsRegenerating(true);
-        // 清空当前内容，准备接收流式数据
+        
+        // 初始化流式缓冲区
+        streamBufferRef.current = '';
+        
+        // 清空当前内容
         setState(prev => ({
             ...prev,
             generatedContent: { ...prev.generatedContent, [selectedChapterId]: '' }
@@ -201,35 +216,59 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                 chapterInfo.parents,
                 state.overview,
                 state.requirements,
-                regenPrompt,          // 用户指令
-                currentContent,       // 旧内容作为参考
+                regenPrompt,
+                currentContent,
                 state.config,
                 (chunk) => {
-                    // 流式更新内容
-                    setState(prev => ({
-                        ...prev,
-                        generatedContent: { 
-                            ...prev.generatedContent, 
-                            [selectedChapterId]: (prev.generatedContent[selectedChapterId] || '') + chunk 
-                        }
-                    }));
+                    // ✅ 核心修复：使用防抖策略批量更新
+                    streamBufferRef.current += chunk;
+                    
+                    // 清除之前的定时器
+                    if (updateTimerRef.current) {
+                        clearTimeout(updateTimerRef.current);
+                    }
+                    
+                    // 设置新的定时器：100ms内的所有chunk会被合并成一次更新
+                    updateTimerRef.current = setTimeout(() => {
+                        const bufferedContent = streamBufferRef.current;
+                        setState(prev => ({
+                            ...prev,
+                            generatedContent: { 
+                                ...prev.generatedContent, 
+                                [selectedChapterId]: bufferedContent
+                            }
+                        }));
+                    }, 100); // 100ms防抖
                 }
             );
+            
+            // ✅ 生成完成后，立即刷新最终内容（避免最后一段被延迟）
+            if (updateTimerRef.current) {
+                clearTimeout(updateTimerRef.current);
+            }
+            const finalContent = streamBufferRef.current;
+            setState(prev => ({
+                ...prev,
+                generatedContent: { 
+                    ...prev.generatedContent, 
+                    [selectedChapterId]: finalContent
+                }
+            }));
+            
             message.success("重写完成");
             setIsRegenModalOpen(false);
         } catch (error) {
             console.error(error);
             message.error("重写失败，请重试");
-            // 恢复旧内容（可选，这里简化处理就不恢复了，或者可以用 useRef 存一份备份）
         } finally {
             setIsRegenerating(false);
+            streamBufferRef.current = ''; // 清空缓冲区
         }
     };
 
-    // 🟢 新增：处理“进入数据库管理”或“完成编辑”点击
+    // 🟢 新增：处理"进入数据库管理"或"完成编辑"点击
     const handleDatabaseManagement = () => {
-        message.info('已保存当前编辑内容。您可以从“知识与数据管理”页面进行高级查询。', 5);
-        // 调用 onNext 触发流程进入最终步骤 (ProcessStep.CONTENT_FINALIZE)
+        message.info('已保存当前编辑内容。您可以从"知识与数据管理"页面进行高级查询。', 5);
         onNext(); 
     };
 
@@ -237,12 +276,11 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         message.info("重新生成功能需连接后端流式接口，当前仅演示编辑功能");
     };
 
-    // 🟢 新增：单独的导出功能（依然保留，只是从主流程中移除）
+    // 🟢 新增：单独的导出功能
     const handleOneClickExport = async () => {
          setLoading(true);
         try {
             message.info('正在打包导出 Word 文档...');
-            // 假设 exportToWord 已经导入
             await exportToWord(state.generatedContent, state.outline);
             message.success('导出成功！');
         } catch (error) {
@@ -280,7 +318,7 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                 <Space>
                     <Button 
                         icon={<ReloadOutlined />} 
-                        onClick={handleRegenerateClick} // 🟢 绑定新事件
+                        onClick={handleRegenerateClick}
                         disabled={!selectedChapterId || isRegenerating}
                         loading={isRegenerating}
                     >

@@ -104,6 +104,7 @@ def build_bidding_user_prompt(
 - 数据量化：关键指标必须数字化"""
 
     # 构建RAG上下文提示
+    context_section = ""
     if db_context or rag_context:
         context_section = "### 📚 企业内部参考资料（动静结合）\n\n"
         
@@ -275,7 +276,7 @@ def build_regeneration_user_prompt(
 # 章节内容修订任务
 
 ## 背景信息
-- **项目背景**：{project_overview}...
+- **项目背景**：{project_overview[:200]}...
 - **当前章节**：{chapter_id} {title}
 - **章节概要**：{desc}
 {rag_section}
@@ -283,15 +284,19 @@ def build_regeneration_user_prompt(
 ## 📝 原有内容 (待修改)
 ```markdown
 {original_content}
-✍️ 修改指令
-用户要求：{user_instruction}
-执行要求：
-1.请根据用户的修改指令，对原有内容进行重写或优化。
-2.如果用户指令是补充内容，请在原有基础上扩展；如果是修改风格，请重写全文。
-3.保持专业标书的严谨性。
-4.直接输出修改后的完整内容，不要输出"好的"、"修改如下"等无关文字。
+```
 
-请开始修改： """
+## ✍️ 修改指令
+用户要求：{user_instruction}
+
+## 执行要求
+1. 请根据用户的修改指令，对原有内容进行重写或优化
+2. 如果用户指令是补充内容，请在原有基础上扩展；如果是修改风格，请重写全文
+3. 保持专业标书的严谨性，使用Markdown格式
+4. 直接输出修改后的完整内容，不要输出"好的"、"修改如下"等无关文字
+5. 确保输出内容完整，不要截断
+
+请开始修改："""
 
 
 # ==========================================
@@ -305,6 +310,7 @@ class StreamFilter:
     in_think_block: bool = False
     buffer: str = ""
     has_started_output: bool = False
+    is_regeneration: bool = False  # 新增：标识是否为重写模式
 
     def process(self, chunk: str) -> str:
         if not chunk: return ""
@@ -318,7 +324,7 @@ class StreamFilter:
             if "<think>" in self.buffer:
                 self.in_think_block = True
                 # 把 <think> 之前的内容（如果有）拿出来
-                parts = self.buffer.split("<think>", 1) # 限制分割次数
+                parts = self.buffer.split("<think>", 1)
                 pre_think = parts[0]
                 output += pre_think
                 # 缓冲区保留 <think> 之后的部分
@@ -334,32 +340,35 @@ class StreamFilter:
                 self.buffer = parts[1] if len(parts) > 1 else ""
             else:
                 # 还在思考块中，不输出任何内容
-                # 为了防止缓冲区无限增长（虽然不常见），可以设置一个安全阈值，但这里为了逻辑简单暂不设置
-                return output # 仅返回思考块之前的内容
+                return output
 
         # 3. 如果不在思考块中，处理开场白过滤 (仅在刚开始输出时)
         if not self.in_think_block and not self.has_started_output:
-            # 常见的废话正则
-            patterns = [
-                r"^(好的|明白了|没问题|Sure|Here is).*?[\n\r]", 
-                r"^.*?(为您|如下).*?[:：][\n\r]",
-                r"^根据.*?要求"
-            ]
-            
-            # 如果缓冲区还很短，可能还没把废话吐完，先攒一攒
-            if len(self.buffer) < 30 and self.buffer.strip(): 
-                return output # 暂时不输出新内容
-            
-            # 尝试清洗
-            temp_buf = self.buffer
-            for p in patterns:
-                match = re.match(p, temp_buf, re.IGNORECASE | re.DOTALL)
-                if match:
-                    temp_buf = temp_buf[match.end():]
-            
-            if temp_buf != self.buffer:
-                self.buffer = temp_buf
+            # ✅ 重写模式下跳过开场白过滤
+            if self.is_regeneration:
                 self.has_started_output = True
+            else:
+                # 如果缓冲区还很短，可能还没把废话吐完，先攒一攒
+                if len(self.buffer) < 30 and self.buffer.strip(): 
+                    return output  # 提前返回，等待更多内容
+                
+                # 常见的废话正则
+                patterns = [
+                    r"^(好的|明白了|没问题|Sure|Here is).*?[\n\r]", 
+                    r"^.*?(为您|如下).*?[:：][\n\r]",
+                    r"^根据.*?要求"
+                ]
+                
+                # 尝试清洗
+                temp_buf = self.buffer
+                for p in patterns:
+                    match = re.match(p, temp_buf, re.IGNORECASE | re.DOTALL)
+                    if match:
+                        temp_buf = temp_buf[match.end():]
+                
+                if temp_buf != self.buffer:
+                    self.buffer = temp_buf
+                    self.has_started_output = True
         
         # 4. 输出缓冲区内容
         if not self.in_think_block:
@@ -375,7 +384,7 @@ class StreamFilter:
 
     def flush(self) -> str:
         """最后清空缓冲区"""
-        if self.in_think_block: return "" # 还没闭合的思考，直接丢弃
+        if self.in_think_block: return ""
         return self.buffer
     
 def clean_final_text(text: str) -> str:
@@ -441,19 +450,15 @@ async def generate_chapter_content_stream(
             # 3. 🟢 优化的动静结合逻辑
             
             # (A) 判定是否为"业绩/经验"类章节
-            # 逻辑：必须包含正面词，且不包含纯理论/当前项目的描述词
             trigger_words = ["业绩", "案例", "经验", "证明", "同类项目", "成功", "交付"]
             exclude_words = ["背景", "目标", "需求", "现状", "原则", "总体", "架构"] 
-            
-            # 特殊修正：如果是"项目实施经验"，虽然有"实施"，但只要有"经验"就算
-            is_experience_chapter = False
             
             # 简单评分法判断
             score = 0
             for w in trigger_words: 
                 if w in title: score += 1
             for w in exclude_words:
-                if w in title: score -= 10 # 排除词权重极大
+                if w in title: score -= 10
             
             # 标题修正：如果标题包含"公司"和"实力/介绍"，通常也需要业绩
             if "公司" in title and ("实力" in title or "介绍" in title or "概况" in title):
@@ -462,28 +467,20 @@ async def generate_chapter_content_stream(
             if score > 0:
                 logger.info(f"章节 [{title}] 判定为业绩类章节，触发数据库检索...")
                 
-                # (B) 智能提取检索关键词 (解决"类似项目"检索问题)
-                # 不用章节标题搜，而是用"当前项目"的业务领域去搜
-                
+                # (B) 智能提取检索关键词
                 search_kw = ""
-                # 策略1：简单的启发式提取 (速度快)
-                # 假设项目概述第一句通常包含项目类型，如"本项目旨在建设智慧校园..."
                 first_sentence = project_overview[:50]
                 if "智慧" in first_sentence: search_kw = "智慧"
                 elif "云" in first_sentence: search_kw = "云"
                 elif "平台" in first_sentence: search_kw = "平台"
                 elif "系统" in first_sentence: search_kw = "系统"
                 
-                # 策略2：如果启发式太泛，尝试用 LLM 提取 (更精准)
-                # 为了不显著增加延迟，我们只在流式生成的开头做一次快速请求
+                # 策略2：如果启发式太泛，尝试用 LLM 提取
                 try:
-                    # 使用一个极简的 Prompt
                     extract_prompt = [
                         {"role": "system", "content": "提取1个核心业务领域关键词(如:智慧城市)，仅输出词。"},
                         {"role": "user", "content": f"项目概述：{project_overview[:200]}"}
                     ]
-                    # 注意：OpenAI/Qwen 接口可能有差异，这里尝试通用调用
-                    # 假设 model_service 有非流式接口 chat_completion (qwen_api.py中有)
                     kw_res = await model_service.chat_completion(extract_prompt, temperature=0.1)
                     clean_kw = re.sub(r'[^\w]', '', kw_res).strip()
                     if clean_kw and len(clean_kw) < 10:
@@ -491,10 +488,9 @@ async def generate_chapter_content_stream(
                         logger.info(f"AI提取检索关键词: {search_kw}")
                 except Exception as e:
                     logger.warning(f"关键词提取失败，回退到模糊搜索: {e}")
-                    if not search_kw: search_kw = "项目" # 最底线兜底
+                    if not search_kw: search_kw = "项目"
 
                 # (C) 执行检索
-                # 3.1 查数据库 (Static)
                 search_result = table_service.search_projects_and_attachments(search_kw)
                 projects = search_result.get("projects", [])
                 file_sources = search_result.get("file_sources", [])
@@ -505,11 +501,8 @@ async def generate_chapter_content_stream(
                         for p in projects
                     ])
                 
-                # 3.2 查知识库 (Link - 只搜关联文件)
-                # 如果找到了关联文件，就限定范围搜；否则搜全库
+                # 3.2 查知识库
                 rag_filter = {"source": {"$in": file_sources}} if file_sources else None
-                
-                # 查询词：结合章节标题和项目关键词
                 query_text = f"{title} {search_kw} 实施难点 解决方案"
                 retrieved_docs = rag_service.search(query_text, n_results=3, filter=rag_filter)
                 
@@ -533,8 +526,9 @@ async def generate_chapter_content_stream(
 
         parent_text = " > ".join([p['title'] for p in (request.parent_chapters or [])])
 
-        # 🟢 分支逻辑：重写 vs 初次生成
+        # 🟢 分支逻辑：重写 vs 初次生成 (✅ 修复后的版本)
         if regeneration_prompt:
+            logger.info(f"🔄 进入重写模式，用户指令: {regeneration_prompt}")
             system_prompt = "你是一名专业的标书编辑，擅长根据用户反馈修改和润色文档。"
             user_prompt = build_regeneration_user_prompt(
                 project_overview=project_overview,
@@ -546,6 +540,7 @@ async def generate_chapter_content_stream(
                 rag_context=rag_context_str
             )
         else:
+            logger.info(f"✨ 进入初次生成模式")
             system_prompt = build_bidding_system_prompt()
             user_prompt = build_bidding_user_prompt(
                 project_overview=project_overview,
@@ -557,16 +552,6 @@ async def generate_chapter_content_stream(
                 rag_context=rag_context_str,
                 db_context=db_context_str
             )
-        user_prompt = build_bidding_user_prompt(
-            project_overview=project_overview,
-            chapter_id=request.chapter.get("id", ""),
-            title=title,
-            desc=desc,
-            parent_text=parent_text,
-            target_word_count=target_word_count,
-            rag_context=rag_context_str,
-            db_context=db_context_str 
-        )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -577,32 +562,42 @@ async def generate_chapter_content_stream(
         if stream:
             async def generate():
                 stream_filter = StreamFilter()
+                stream_filter.is_regeneration = bool(regeneration_prompt)  # ✅ 设置重写标识
                 full_content = ""
                 try:
                     yield f"data: {json.dumps({'status': 'started', 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
                     
                     async for chunk in model_service.chat_completion_stream(messages, temperature=0.7):
                         filtered_chunk = stream_filter.process(chunk)
+                        
+                        if filtered_chunk:
+                            full_content += filtered_chunk
+                            yield f"data: {json.dumps({'status': 'streaming', 'content': filtered_chunk, 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
                     
-                    if filtered_chunk:
-                        full_content += filtered_chunk
-                        yield f"data: {json.dumps({'status': 'streaming', 'content': filtered_chunk, 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
-                
                     # 🟢 处理缓冲区剩余内容
                     remaining = stream_filter.flush()
                     if remaining:
                         full_content += remaining
+                        logger.info(f"💡 缓冲区剩余内容长度: {len(remaining)}")
                         yield f"data: {json.dumps({'status': 'streaming', 'content': remaining, 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
 
-                    # 最终清洗（去除首尾空白等）
+                    # 最终清洗
                     final_clean = clean_final_text(full_content)
+                    logger.info(f"✅ 完整内容长度: {len(full_content)} → 清洗后: {len(final_clean)}")
                     
-                    # 发送完成事件（前端可以用这个替换掉流式累积的内容，确保最终格式完美）
-                    yield f"data: {json.dumps({'status': 'completed', 'content': final_clean, 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
+                    # 发送完成事件
+                    completion_data = {
+                        'status': 'completed', 
+                        'content': final_clean, 
+                        'chapter_id': request.chapter.get('id'),
+                        'content_length': len(final_clean),
+                        'is_regeneration': bool(regeneration_prompt),
+                        'word_count': len(final_clean)
+                    }
+                    yield f"data: {json.dumps(completion_data, ensure_ascii=False)}\n\n"
 
                 except asyncio.CancelledError:
                     logger.info(f"Chapter generation cancelled for {request.chapter.get('id')}")
-                    # 不在 CancelledError 中 yield 任何数据
                     return
                 except Exception as e:
                     logger.error(f"Stream error: {e}", exc_info=True)
@@ -635,6 +630,7 @@ async def generate_chapter_content_stream(
             )
 
     except Exception as e:
+        logger.error(f"生成失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=500, 
             content={
