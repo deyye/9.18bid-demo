@@ -1,23 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button, Select, message, Spin, Typography, Layout as AntdLayout, Space, Empty, Tag, Modal, Input } from 'antd';
-import { FileWordOutlined, ReloadOutlined, EditOutlined, LoadingOutlined, CheckCircleOutlined, DatabaseOutlined, SendOutlined } from '@ant-design/icons';
+import { FileWordOutlined, ReloadOutlined, EditOutlined, LoadingOutlined, CheckCircleOutlined, DatabaseOutlined } from '@ant-design/icons';
 import useAppState from '../hooks/useAppState';
 import { exportToWord, regenerateSingleChapter } from '../services/api';
-
-// 引入 ReactQuill 及样式
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import { OutlineItem } from '../types';
 
-// 🟢 关键修复：创建一个避开类型检查的 Quill 包装器
 const QuillWrapper = ReactQuill as any;
 const { Title, Text } = Typography;
 const { Content } = AntdLayout;
 const { TextArea } = Input;
-
-interface ContentEditProps {
-    onNext: () => void;
-}
 
 // --- 自定义样式：模拟 A4 纸张和 Word 风格 ---
 const editorStyles = `
@@ -84,12 +77,12 @@ const editorStyles = `
 const modules = {
     toolbar: [
         [{ 'header': [1, 2, 3, false] }],
-        ['bold', 'italic', 'underline', 'strike'],
-        [{ 'color': [] }, { 'background': [] }],
-        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-        [{ 'indent': '-1'}, { 'indent': '+1' }],
-        [{ 'align': [] }],
-        ['clean']
+        ['bold', 'italic', 'underline', 'strike'],        // 字体样式
+        [{ 'color': [] }, { 'background': [] }],          // 颜色
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],     // 列表
+        [{ 'indent': '-1'}, { 'indent': '+1' }],          // 缩进
+        [{ 'align': [] }],                                // 对齐
+        ['clean']                                         // 清除格式
     ],
 };
 
@@ -101,27 +94,28 @@ const formats = [
     'align'
 ];
 
+interface ContentEditProps {
+    onNext: () => void;
+}
+
 const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
     const { state, setState } = useAppState();
     const [loading, setLoading] = useState(false);
     const [selectedChapterId, setSelectedChapterId] = useState<string | undefined>(undefined);
     
+    // 重写弹窗状态
     const [isRegenModalOpen, setIsRegenModalOpen] = useState(false);
     const [regenPrompt, setRegenPrompt] = useState('');
     const [isRegenerating, setIsRegenerating] = useState(false);
 
-    // 🟢 核心修复1：使用 ref 缓存流式内容，避免频繁渲染
-    const streamBufferRef = useRef<string>('');
-    const updateTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-    // 获取当前章节内容
+    // 获取当前章节内容（如果没有则为空字符串）
     const currentContent = selectedChapterId ? (state.generatedContent[selectedChapterId] || '') : '';
 
     // 递归获取所有章节选项
     const getAllChapters = (outline: any[], level = 0): { value: string; label: string }[] => {
         let chapters: { value: string; label: string }[] = [];
         outline.forEach((item) => {
-            const prefix = '\u00A0\u00A0'.repeat(level * 2);
+            const prefix = '\u00A0\u00A0'.repeat(level * 2); // 使用空格缩进显示层级
             chapters.push({ 
                 value: item.id, 
                 label: `${prefix}${item.id} ${item.title}` 
@@ -136,9 +130,10 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
 
     const chapterOptions = getAllChapters(state.outline);
 
-    // 自动选择第一个有内容的章节
+    // 自动选择第一个有内容的章节（如果未选择）
     useEffect(() => {
         if (!selectedChapterId && chapterOptions.length > 0) {
+            // 优先找已经生成了内容的章节
             const firstGenerated = chapterOptions.find(opt => state.generatedContent[opt.value]);
             if (firstGenerated) {
                 setSelectedChapterId(firstGenerated.value);
@@ -147,15 +142,6 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
             }
         }
     }, [state.generatedContent, chapterOptions, selectedChapterId]);
-
-    // 🟢 核心修复2：清理定时器
-    useEffect(() => {
-        return () => {
-            if (updateTimerRef.current) {
-                clearTimeout(updateTimerRef.current);
-            }
-        };
-    }, []);
 
     // 处理内容变更
     const handleContentChange = (content: string) => {
@@ -170,7 +156,7 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         }
     };
 
-    // 🟢 辅助函数：查找当前章节对象及其父级链
+    // 辅助函数：查找当前章节对象及其父级链
     const findChapterInfo = (items: OutlineItem[], targetId: string, parents: OutlineItem[] = []): { node: OutlineItem, parents: OutlineItem[] } | null => {
         for (const item of items) {
             if (item.id === targetId) return { node: item, parents };
@@ -182,14 +168,14 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         return null;
     };
 
-    // 🟢 点击"AI 重写本章"按钮
+    // 点击"AI 重写本章"按钮
     const handleRegenerateClick = () => {
         if (!selectedChapterId) return;
-        setRegenPrompt('');
+        setRegenPrompt(''); // 重置输入框
         setIsRegenModalOpen(true);
     };
 
-    // 🟢 核心修复3：优化的确认重写函数
+    // 确认重写
     const handleRegenerateConfirm = async () => {
         if (!selectedChapterId) return;
         
@@ -200,11 +186,7 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         }
 
         setIsRegenerating(true);
-        
-        // 初始化流式缓冲区
-        streamBufferRef.current = '';
-        
-        // 清空当前内容
+        // 清空当前内容，准备接收流式数据
         setState(prev => ({
             ...prev,
             generatedContent: { ...prev.generatedContent, [selectedChapterId]: '' }
@@ -216,45 +198,20 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                 chapterInfo.parents,
                 state.overview,
                 state.requirements,
-                regenPrompt,
-                currentContent,
+                regenPrompt,          // 用户指令
+                currentContent,       // 旧内容作为参考
                 state.config,
                 (chunk) => {
-                    // ✅ 核心修复：使用防抖策略批量更新
-                    streamBufferRef.current += chunk;
-                    
-                    // 清除之前的定时器
-                    if (updateTimerRef.current) {
-                        clearTimeout(updateTimerRef.current);
-                    }
-                    
-                    // 设置新的定时器：100ms内的所有chunk会被合并成一次更新
-                    updateTimerRef.current = setTimeout(() => {
-                        const bufferedContent = streamBufferRef.current;
-                        setState(prev => ({
-                            ...prev,
-                            generatedContent: { 
-                                ...prev.generatedContent, 
-                                [selectedChapterId]: bufferedContent
-                            }
-                        }));
-                    }, 100); // 100ms防抖
+                    // 流式更新内容
+                    setState(prev => ({
+                        ...prev,
+                        generatedContent: { 
+                            ...prev.generatedContent, 
+                            [selectedChapterId]: (prev.generatedContent[selectedChapterId] || '') + chunk 
+                        }
+                    }));
                 }
             );
-            
-            // ✅ 生成完成后，立即刷新最终内容（避免最后一段被延迟）
-            if (updateTimerRef.current) {
-                clearTimeout(updateTimerRef.current);
-            }
-            const finalContent = streamBufferRef.current;
-            setState(prev => ({
-                ...prev,
-                generatedContent: { 
-                    ...prev.generatedContent, 
-                    [selectedChapterId]: finalContent
-                }
-            }));
-            
             message.success("重写完成");
             setIsRegenModalOpen(false);
         } catch (error) {
@@ -262,21 +219,14 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
             message.error("重写失败，请重试");
         } finally {
             setIsRegenerating(false);
-            streamBufferRef.current = ''; // 清空缓冲区
         }
     };
 
-    // 🟢 新增：处理"进入数据库管理"或"完成编辑"点击
     const handleDatabaseManagement = () => {
-        message.info('已保存当前编辑内容。您可以从"知识与数据管理"页面进行高级查询。', 5);
+        message.info('已保存当前编辑内容。您可以从“知识与数据管理”页面进行高级查询。', 5);
         onNext(); 
     };
 
-    const handleRegenerateChapter = () => {
-        message.info("重新生成功能需连接后端流式接口，当前仅演示编辑功能");
-    };
-
-    // 🟢 新增：单独的导出功能
     const handleOneClickExport = async () => {
          setLoading(true);
         try {
@@ -294,15 +244,33 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         <AntdLayout className="editor-layout">
             <style>{editorStyles}</style>
             
-            <div style={{ background: '#fff', padding: '12px 24px', borderBottom: '1px solid #e8e8e8', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', zIndex: 200 }}>
+            {/* 顶部操作栏 */}
+            <div style={{ 
+                background: '#fff', 
+                padding: '12px 24px', 
+                borderBottom: '1px solid #e8e8e8',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                zIndex: 200
+            }}>
                 <Space size="middle">
-                    <Title level={4} style={{ margin: 0, color: '#1890ff' }}><EditOutlined /> 内容精修</Title>
+                    <Title level={4} style={{ margin: 0, color: '#1890ff' }}>
+                        <EditOutlined /> 内容精修
+                    </Title>
                     <span style={{ color: '#e8e8e8' }}>|</span>
+                    
                     {state.isGenerating || isRegenerating ? (
-                        <Tag icon={<LoadingOutlined />} color="processing">AI 正在撰写中...</Tag>
+                        <Tag icon={<LoadingOutlined />} color="processing">
+                            AI 正在撰写中... ({Object.keys(state.generatedContent).length}/{chapterOptions.length})
+                        </Tag>
                     ) : (
-                        <Tag icon={<CheckCircleOutlined />} color="success">就绪</Tag>
+                        <Tag icon={<CheckCircleOutlined />} color="success">
+                            就绪
+                        </Tag>
                     )}
+
                     <Text>当前章节：</Text>
                     <Select
                         style={{ width: 400 }} 
@@ -311,49 +279,67 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                         value={selectedChapterId}
                         onChange={setSelectedChapterId}
                         showSearch
-                        filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+                        filterOption={(input, option) =>
+                            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                        }
                     />
                 </Space>
 
                 <Space>
                     <Button 
                         icon={<ReloadOutlined />} 
-                        onClick={handleRegenerateClick}
+                        onClick={handleRegenerateClick} 
                         disabled={!selectedChapterId || isRegenerating}
                         loading={isRegenerating}
                     >
                         AI 重写本章
                     </Button>
-                    <Button type="primary" icon={<DatabaseOutlined />} onClick={handleDatabaseManagement} disabled={Object.keys(state.generatedContent).length === 0}>
+                    <Button 
+                        type="primary" 
+                        icon={<DatabaseOutlined />} 
+                        onClick={handleDatabaseManagement}
+                        disabled={Object.keys(state.generatedContent).length === 0}
+                    >
                         转到数据管理
                     </Button>
-                    <Button icon={<FileWordOutlined />} onClick={handleOneClickExport} loading={loading} disabled={Object.keys(state.generatedContent).length === 0}>
+                    <Button 
+                        icon={<FileWordOutlined />} 
+                        onClick={handleOneClickExport}
+                        loading={loading}
+                        disabled={Object.keys(state.generatedContent).length === 0}
+                    >
                         导出 Word
                     </Button>
                 </Space>
             </div>
 
+            {/* 编辑区主体 */}
             <Content style={{ padding: '24px', overflowY: 'auto' }}>
                 <Spin spinning={loading || isRegenerating} tip="AI 奋笔疾书中...">
                     {selectedChapterId ? (
                         <div className="a4-paper-container">
+                            {/* 🟢 核心修复：添加 key={selectedChapterId} */}
+                            {/* 这样当切换章节时，React 会强制销毁旧编辑器并创建新实例，防止内容错乱 */}
                             <QuillWrapper
+                                key={selectedChapterId} 
                                 theme="snow"
                                 value={currentContent}
                                 onChange={handleContentChange}
                                 modules={modules}
                                 formats={formats}
                                 className="quill-editor"
-                                placeholder="此处将显示 AI 生成的内容..."
+                                placeholder="此处将显示 AI 生成的内容，您可以像使用 Word 一样直接编辑..."
                             />
                         </div>
                     ) : (
-                        <div style={{ marginTop: 100 }}><Empty description="请先在左上角选择一个章节" /></div>
+                        <div style={{ marginTop: 100 }}>
+                            <Empty description="请先在左上角选择一个章节" />
+                        </div>
                     )}
                 </Spin>
             </Content>
 
-            {/* 🟢 重写交互弹窗 */}
+            {/* 重写交互弹窗 */}
             <Modal
                 title="AI 章节重写"
                 open={isRegenModalOpen}

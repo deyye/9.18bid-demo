@@ -769,6 +769,4 @@ rag.clear()  # 清空知识库
 
 **⭐ 如果觉得项目有帮助，请给个Star支持一下！**
 
-Made with ❤️ by [Your Team Name]
-
 </div>
