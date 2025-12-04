@@ -478,10 +478,10 @@ export async function getAvailableTables(): Promise<{ tables: Array<{ name: stri
 
 // --- t_company CRUD 示例 ---
 
-export async function listCompanyRecords(limit: number = 10, offset: number = 0): Promise<{ total: number, items: any[] }> {
-    // ⚠️ 仅为示例：这里只查询 t_company 表
-    const response = await fetch(`${API_BASE_URL}/data/t_company/list?limit=${limit}&offset=${offset}`);
-    if (!response.ok) throw new Error('查询公司记录失败');
+export async function listTableRecords(tableName: string, limit: number = 10, offset: number = 0): Promise<{ total: number, items: any[] }> {
+    // 动态拼接 tableName 到 URL
+    const response = await fetch(`${API_BASE_URL}/data/${tableName}/list?limit=${limit}&offset=${offset}`);
+    if (!response.ok) throw new Error(`查询表 ${tableName} 记录失败`);
     return await response.json();
 }
 
@@ -520,4 +520,79 @@ export async function deleteRecord(tableName: string, recordId: string): Promise
         throw new Error(errorData.detail || '删除记录失败');
     }
     return await response.json();
+}
+
+/**
+ * @function regenerateSingleChapter
+ * @description 重新生成单个章节，支持用户指令和参考旧内容
+ */
+export async function regenerateSingleChapter(
+    chapter: OutlineItem,
+    parentChapters: OutlineItem[], // 上级章节列表
+    overview: string,
+    requirements: string,
+    regenerationPrompt: string, // 用户指令
+    originalContent: string,    // 旧内容
+    config: AppState['config'],
+    onChunk: (content: string) => void
+): Promise<void> {
+    
+    const combinedOverview = `项目概述：\n${overview}\n\n技术评分要求：\n${requirements}`;
+
+    const response = await fetch(`${API_BASE_URL}/content/generate-single-chapter?use_qwen=true`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            chapter: chapter,
+            parent_chapters: parentChapters,
+            project_overview: combinedOverview,
+            regeneration_prompt: regenerationPrompt, // 🟢 传给后端
+            original_content: originalContent,       // 🟢 传给后端
+            config: {
+                api_key: config.apiKey,
+                model_name: config.modelName,
+            }
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`重写服务连接失败: ${response.statusText}`);
+    }
+    
+    if (!response.body) throw new Error("ReadableStream not supported");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6).trim();
+                if (jsonStr === "[DONE]") break;
+                if (!jsonStr) continue;
+
+                try {
+                    const data = JSON.parse(jsonStr);
+                    if (data.status === 'streaming' && data.content) {
+                        onChunk(data.content); // 实时回调流式片段
+                    } else if (data.status === 'completed' && data.content) {
+                        // 最终内容（包含清洗后的）
+                        // onChunk(data.content); 
+                    } else if (data.status === 'error') {
+                        console.error(`生成错误: ${data.message}`);
+                    }
+                } catch (e) {
+                    console.warn("解析流数据失败", e);
+                }
+            }
+        }
+    }
 }

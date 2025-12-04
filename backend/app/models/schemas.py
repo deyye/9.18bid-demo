@@ -40,9 +40,38 @@ class AnalysisType(str, Enum):
 
 
 class AnalysisRequest(BaseModel):
-    """文档分析请求"""
     file_content: str = Field(..., description="文档内容")
     analysis_type: AnalysisType = Field(..., description="分析类型")
+
+class OutlineItem(BaseModel):
+    id: str
+    title: str
+    description: str
+    word_count: Optional[int] = Field(None, description="目标字数")
+    children: Optional[List['OutlineItem']] = None
+    content: Optional[str] = None
+
+class OutlineResponse(BaseModel):
+    outline: List[OutlineItem]
+
+class OutlineRequest(BaseModel):
+    overview: str = Field(..., description="项目概述")
+    requirements: str = Field(..., description="技术评分要求")
+
+class ContentGenerationRequest(BaseModel):
+    outline: List[Dict[str, Any]] = Field(..., description="目录结构列表")
+    project_overview: str = Field("", description="项目概述")
+
+class ChapterContentRequest(BaseModel):
+    """单章节内容生成请求"""
+    chapter: Dict[str, Any] = Field(..., description="章节信息")
+    parent_chapters: Optional[List[Dict[str, Any]]] = Field(None, description="上级章节列表")
+    sibling_chapters: Optional[List[Dict[str, Any]]] = Field(None, description="同级章节列表")
+    project_overview: str = Field("", description="项目概述")
+    
+    # 🟢 新增：用于重新生成的字段
+    regeneration_prompt: Optional[str] = Field(None, description="重新生成的指导提示词")
+    original_content: Optional[str] = Field(None, description="原有内容（用于参考或修改）")
 
 
 class OutlineItem(BaseModel):
@@ -82,6 +111,8 @@ class ChapterContentRequest(BaseModel):
     parent_chapters: Optional[List[Dict[str, Any]]] = Field(None, description="上级章节列表")
     sibling_chapters: Optional[List[Dict[str, Any]]] = Field(None, description="同级章节列表")
     project_overview: str = Field("", description="项目概述")
+    regeneration_prompt: Optional[str] = Field(None, description="重新生成的指导提示词")
+    original_content: Optional[str] = Field(None, description="原有内容（用于参考或修改）")
 
 
 class ErrorResponse(BaseModel):

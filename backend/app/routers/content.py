@@ -5,11 +5,14 @@ from ..services.openai_service import OpenAIService
 from ..services.qwen_api import QwenService
 from ..services.rag_service import get_rag_service
 from ..utils.config_manager import config_manager
-import json, re
+import json, re, logging
 import os
 from ..db_config import get_db
+import asyncio
 from ..services.table_service import TableService
+from dataclasses import dataclass, field
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/content", tags=["内容管理"])
 
 def get_model_service(use_qwen: bool = True):
@@ -253,6 +256,128 @@ def build_bidding_user_prompt(
 现在开始撰写：
 """
 
+# 🟢 新增：重写专用的 Prompt 构建函数
+def build_regeneration_user_prompt(
+    project_overview: str,
+    chapter_id: str,
+    title: str,
+    desc: str,
+    original_content: str,
+    user_instruction: str,
+    rag_context: str = ""
+) -> str:
+    """构建用于重新生成的 Prompt"""
+    rag_section = ""
+    if rag_context:
+        rag_section = f"\n### 💡 企业知识库参考\n{rag_context}\n"
+
+    return f"""
+# 章节内容修订任务
+
+## 背景信息
+- **项目背景**：{project_overview}...
+- **当前章节**：{chapter_id} {title}
+- **章节概要**：{desc}
+{rag_section}
+
+## 📝 原有内容 (待修改)
+```markdown
+{original_content}
+✍️ 修改指令
+用户要求：{user_instruction}
+执行要求：
+1.请根据用户的修改指令，对原有内容进行重写或优化。
+2.如果用户指令是补充内容，请在原有基础上扩展；如果是修改风格，请重写全文。
+3.保持专业标书的严谨性。
+4.直接输出修改后的完整内容，不要输出"好的"、"修改如下"等无关文字。
+
+请开始修改： """
+
+
+# ==========================================
+# 🟢 核心修复：流式过滤器
+# ==========================================
+@dataclass
+class StreamFilter:
+    """
+    用于过滤流式输出中的 <think> 标签和开场白
+    """
+    in_think_block: bool = False
+    buffer: str = ""
+    has_started_output: bool = False
+
+    def process(self, chunk: str) -> str:
+        if not chunk: return ""
+        
+        # 将新块加入缓冲区
+        self.buffer += chunk
+        output = ""
+
+        # 1. 处理 <think> 块的开始
+        if not self.in_think_block:
+            if "<think>" in self.buffer:
+                self.in_think_block = True
+                # 把 <think> 之前的内容（如果有）拿出来
+                parts = self.buffer.split("<think>", 1) # 限制分割次数
+                pre_think = parts[0]
+                output += pre_think
+                # 缓冲区保留 <think> 之后的部分
+                self.buffer = parts[1] if len(parts) > 1 else ""
+        
+        # 2. 处理 <think> 块的结束
+        if self.in_think_block:
+            if "</think>" in self.buffer:
+                self.in_think_block = False
+                # 丢弃 </think> 之前的所有内容（思考过程）
+                parts = self.buffer.split("</think>", 1)
+                # 保留 </think> 之后的内容
+                self.buffer = parts[1] if len(parts) > 1 else ""
+            else:
+                # 还在思考块中，不输出任何内容
+                # 为了防止缓冲区无限增长（虽然不常见），可以设置一个安全阈值，但这里为了逻辑简单暂不设置
+                return output # 仅返回思考块之前的内容
+
+        # 3. 如果不在思考块中，处理开场白过滤 (仅在刚开始输出时)
+        if not self.in_think_block and not self.has_started_output:
+            # 常见的废话正则
+            patterns = [
+                r"^(好的|明白了|没问题|Sure|Here is).*?[\n\r]", 
+                r"^.*?(为您|如下).*?[:：][\n\r]",
+                r"^根据.*?要求"
+            ]
+            
+            # 如果缓冲区还很短，可能还没把废话吐完，先攒一攒
+            if len(self.buffer) < 30 and self.buffer.strip(): 
+                return output # 暂时不输出新内容
+            
+            # 尝试清洗
+            temp_buf = self.buffer
+            for p in patterns:
+                match = re.match(p, temp_buf, re.IGNORECASE | re.DOTALL)
+                if match:
+                    temp_buf = temp_buf[match.end():]
+            
+            if temp_buf != self.buffer:
+                self.buffer = temp_buf
+                self.has_started_output = True
+        
+        # 4. 输出缓冲区内容
+        if not self.in_think_block:
+            # 为了防止 <think> 标签被切断（如 "<thi"），保留最后几个字符
+            safe_len = 10
+            if len(self.buffer) > safe_len: 
+                to_yield = self.buffer[:-safe_len]
+                self.buffer = self.buffer[-safe_len:]
+                output += to_yield
+                self.has_started_output = True
+        
+        return output
+
+    def flush(self) -> str:
+        """最后清空缓冲区"""
+        if self.in_think_block: return "" # 还没闭合的思考，直接丢弃
+        return self.buffer
+    
 def clean_final_text(text: str) -> str:
     """清洗LLM输出文本"""
     if not text:
@@ -295,15 +420,17 @@ async def generate_chapter_content_stream(
     try:
         model_service = get_model_service(use_qwen)
 
-        # 1. 提取基础信息
-        project_overview = request.project_overview
-        chapter = request.chapter
-        chapter_id = chapter.get("id", "unknown")
-        title = chapter.get("title", "")
-        desc = chapter.get("description", "")
-        # 2. 🟢 初始化 DB 和 RAG 服务
+        # 1. 基础信息
+        title = request.chapter.get("title", "")
+        desc = request.chapter.get("description", "")
+        project_overview = request.project_overview or ""
+        
+        regeneration_prompt = request.regeneration_prompt
+        original_content = request.original_content
+        
+        # 2. 初始化服务
         db_gen = get_db()
-        db = next(db_gen) # 手动获取 session
+        db = next(db_gen)
         table_service = TableService(db)
         rag_service = get_rag_service()
         
@@ -311,48 +438,94 @@ async def generate_chapter_content_stream(
         rag_context_str = ""
         
         try:
-            # 3. 🟢 动静结合检索逻辑
-            # 策略：如果章节标题包含"业绩"、"案例"、"经验"等词，触发数据库检索
-            keywords = ["业绩", "案例", "项目", "经验", "实施"]
-            is_project_chapter = any(k in title for k in keywords)
+            # 3. 🟢 优化的动静结合逻辑
             
-            if is_project_chapter:
-                # 3.1 静态检索：查数据库
-                # 提取关键词作为搜索条件 (简单起见使用标题前4个字，实际可用LLM提取关键词)
-                search_kw = title[:4] 
-                search_result = table_service.search_projects_and_attachments(search_kw)
+            # (A) 判定是否为"业绩/经验"类章节
+            # 逻辑：必须包含正面词，且不包含纯理论/当前项目的描述词
+            trigger_words = ["业绩", "案例", "经验", "证明", "同类项目", "成功", "交付"]
+            exclude_words = ["背景", "目标", "需求", "现状", "原则", "总体", "架构"] 
+            
+            # 特殊修正：如果是"项目实施经验"，虽然有"实施"，但只要有"经验"就算
+            is_experience_chapter = False
+            
+            # 简单评分法判断
+            score = 0
+            for w in trigger_words: 
+                if w in title: score += 1
+            for w in exclude_words:
+                if w in title: score -= 10 # 排除词权重极大
+            
+            # 标题修正：如果标题包含"公司"和"实力/介绍"，通常也需要业绩
+            if "公司" in title and ("实力" in title or "介绍" in title or "概况" in title):
+                score += 5
+
+            if score > 0:
+                logger.info(f"章节 [{title}] 判定为业绩类章节，触发数据库检索...")
                 
+                # (B) 智能提取检索关键词 (解决"类似项目"检索问题)
+                # 不用章节标题搜，而是用"当前项目"的业务领域去搜
+                
+                search_kw = ""
+                # 策略1：简单的启发式提取 (速度快)
+                # 假设项目概述第一句通常包含项目类型，如"本项目旨在建设智慧校园..."
+                first_sentence = project_overview[:50]
+                if "智慧" in first_sentence: search_kw = "智慧"
+                elif "云" in first_sentence: search_kw = "云"
+                elif "平台" in first_sentence: search_kw = "平台"
+                elif "系统" in first_sentence: search_kw = "系统"
+                
+                # 策略2：如果启发式太泛，尝试用 LLM 提取 (更精准)
+                # 为了不显著增加延迟，我们只在流式生成的开头做一次快速请求
+                try:
+                    # 使用一个极简的 Prompt
+                    extract_prompt = [
+                        {"role": "system", "content": "提取1个核心业务领域关键词(如:智慧城市)，仅输出词。"},
+                        {"role": "user", "content": f"项目概述：{project_overview[:200]}"}
+                    ]
+                    # 注意：OpenAI/Qwen 接口可能有差异，这里尝试通用调用
+                    # 假设 model_service 有非流式接口 chat_completion (qwen_api.py中有)
+                    kw_res = await model_service.chat_completion(extract_prompt, temperature=0.1)
+                    clean_kw = re.sub(r'[^\w]', '', kw_res).strip()
+                    if clean_kw and len(clean_kw) < 10:
+                        search_kw = clean_kw
+                        logger.info(f"AI提取检索关键词: {search_kw}")
+                except Exception as e:
+                    logger.warning(f"关键词提取失败，回退到模糊搜索: {e}")
+                    if not search_kw: search_kw = "项目" # 最底线兜底
+
+                # (C) 执行检索
+                # 3.1 查数据库 (Static)
+                search_result = table_service.search_projects_and_attachments(search_kw)
                 projects = search_result.get("projects", [])
                 file_sources = search_result.get("file_sources", [])
                 
-                # 构建数据库上下文
                 if projects:
                     db_context_str = "\n".join([
-                        f"- 项目名称：{p['name']} | 金额：{p['amount']}元 | 时间：{p['date']} | 客户：{p['company']}"
+                        f"- 项目：{p['name']} (金额：{p['amount']}元, 时间：{p['date']}, 客户：{p['company']})"
                         for p in projects
                     ])
                 
-                # 3.2 动态检索：查知识库 (限定在关联文件中)
-                # 如果数据库找到了关联文件，就只搜这些文件；否则搜全库
+                # 3.2 查知识库 (Link - 只搜关联文件)
+                # 如果找到了关联文件，就限定范围搜；否则搜全库
                 rag_filter = {"source": {"$in": file_sources}} if file_sources else None
                 
-                # 使用章节描述或标题作为查询
-                query_text = f"{title} {desc}"
+                # 查询词：结合章节标题和项目关键词
+                query_text = f"{title} {search_kw} 实施难点 解决方案"
                 retrieved_docs = rag_service.search(query_text, n_results=3, filter=rag_filter)
                 
                 if retrieved_docs:
                     rag_context_str = "\n".join([f"- (来源:{doc['source']}) {doc['content']}" for doc in retrieved_docs])
             
             else:
-                # 普通章节：仅进行通用知识库检索 (不加 filter)
-                query_text = f"{title} {desc} {request.project_overview[:50]}"
+                # 非业绩类章节：常规 RAG 检索
+                query_text = f"{title} {desc} {project_overview[:50]}"
                 retrieved_docs = rag_service.search(query_text, n_results=3)
                 if retrieved_docs:
                     rag_context_str = "\n".join([f"- {doc['content']}" for doc in retrieved_docs])
 
         finally:
-            db.close() # 确保关闭连接
-            
+            db.close()
+
         # 4. 构建 Prompt
         target_word_count = request.chapter.get("word_count", 1000)
         try: target_word_count = int(target_word_count)
@@ -360,46 +533,81 @@ async def generate_chapter_content_stream(
 
         parent_text = " > ".join([p['title'] for p in (request.parent_chapters or [])])
 
-        system_prompt = build_bidding_system_prompt()
+        # 🟢 分支逻辑：重写 vs 初次生成
+        if regeneration_prompt:
+            system_prompt = "你是一名专业的标书编辑，擅长根据用户反馈修改和润色文档。"
+            user_prompt = build_regeneration_user_prompt(
+                project_overview=project_overview,
+                chapter_id=request.chapter.get("id", ""),
+                title=title,
+                desc=desc,
+                original_content=original_content or "(无原有内容)",
+                user_instruction=regeneration_prompt,
+                rag_context=rag_context_str
+            )
+        else:
+            system_prompt = build_bidding_system_prompt()
+            user_prompt = build_bidding_user_prompt(
+                project_overview=project_overview,
+                chapter_id=request.chapter.get("id", ""),
+                title=title,
+                desc=desc,
+                parent_text=parent_text,
+                target_word_count=target_word_count,
+                rag_context=rag_context_str,
+                db_context=db_context_str
+            )
         user_prompt = build_bidding_user_prompt(
-            project_overview=request.project_overview,
+            project_overview=project_overview,
             chapter_id=request.chapter.get("id", ""),
             title=title,
             desc=desc,
             parent_text=parent_text,
             target_word_count=target_word_count,
-            rag_context=rag_context_str, # 传入 RAG 上下文
-            db_context=db_context_str    # 传入 DB 上下文
+            rag_context=rag_context_str,
+            db_context=db_context_str 
         )
 
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-
+        
         # 5. 执行生成
         if stream:
             async def generate():
+                stream_filter = StreamFilter()
+                full_content = ""
                 try:
-                    yield f"data: {json.dumps({'status': 'started', 'chapter_id': chapter_id}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'status': 'started', 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
                     
-                    full_content = ""
                     async for chunk in model_service.chat_completion_stream(messages, temperature=0.7):
-                        # 实时清除思考标签
-                        clean = re.sub(r"<think>[\s\S]*?</think>", "", chunk)
-                        if not clean:
-                            continue
-                        
-                        full_content += clean
-                        yield f"data: {json.dumps({'status': 'streaming', 'content': clean, 'chapter_id': chapter_id}, ensure_ascii=False)}\n\n"
+                        filtered_chunk = stream_filter.process(chunk)
                     
-                    # 最终清洗
-                    final_clean = clean_final_text(full_content)
-                    yield f"data: {json.dumps({'status': 'completed', 'content': final_clean, 'chapter_id': chapter_id}, ensure_ascii=False)}\n\n"
-                    
-                except Exception as e:
-                    yield f"data: {json.dumps({'status': 'error', 'message': str(e), 'chapter_id': chapter_id}, ensure_ascii=False)}\n\n"
+                    if filtered_chunk:
+                        full_content += filtered_chunk
+                        yield f"data: {json.dumps({'status': 'streaming', 'content': filtered_chunk, 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
+                
+                    # 🟢 处理缓冲区剩余内容
+                    remaining = stream_filter.flush()
+                    if remaining:
+                        full_content += remaining
+                        yield f"data: {json.dumps({'status': 'streaming', 'content': remaining, 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
 
+                    # 最终清洗（去除首尾空白等）
+                    final_clean = clean_final_text(full_content)
+                    
+                    # 发送完成事件（前端可以用这个替换掉流式累积的内容，确保最终格式完美）
+                    yield f"data: {json.dumps({'status': 'completed', 'content': final_clean, 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
+
+                except asyncio.CancelledError:
+                    logger.info(f"Chapter generation cancelled for {request.chapter.get('id')}")
+                    # 不在 CancelledError 中 yield 任何数据
+                    return
+                except Exception as e:
+                    logger.error(f"Stream error: {e}", exc_info=True)
+                    yield f"data: {json.dumps({'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+                
             return StreamingResponse(
                 generate(), 
                 media_type="text/event-stream", 
@@ -422,7 +630,7 @@ async def generate_chapter_content_stream(
                 content={
                     "success": True, 
                     "content": final_clean, 
-                    "chapter_id": chapter_id
+                    "chapter_id": request.chapter.get('id')
                 }
             )
 
