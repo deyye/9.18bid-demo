@@ -4,7 +4,8 @@
 /DeepSeek-OCR/
 /LangGraph-Chatchat/
 交易招标文件.pdf
-/node_modules/
+node_modules
+build
 /rag_storage/
 __pycache__/
 uploads
