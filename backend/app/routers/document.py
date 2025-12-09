@@ -5,6 +5,7 @@ from ..services.file_service import FileService
 from ..services.openai_service import OpenAIService
 from ..services.qwen_api import QwenService
 from ..utils.config_manager import config_manager
+from ..utils.markdown_parser import MarkdownToWordParser
 import json
 import re
 from io import BytesIO
@@ -345,18 +346,7 @@ async def export_document(request: ExportRequest):
     try:
         doc = Document()
         
-        # 1. 页面设置
-        section = doc.sections[0]
-        section.page_width = Cm(21.0)
-        section.page_height = Cm(29.7)
-        section.left_margin = Cm(3.17)
-        section.right_margin = Cm(3.17)
-
-        # 2. 生成封面
-        create_cover_page(doc, project_name="项目技术标书")
-
-        # 3. 添加页码
-        add_page_number_footer(doc)
+        parser = MarkdownToWordParser(doc)
 
         # 4. 递归生成章节内容
         def add_chapter(items: List[OutlineItem], level: int = 1):

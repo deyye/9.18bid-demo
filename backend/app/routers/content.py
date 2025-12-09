@@ -276,7 +276,7 @@ def build_regeneration_user_prompt(
 # 章节内容修订任务
 
 ## 背景信息
-- **项目背景**：{project_overview[:200]}...
+- **项目背景**：{project_overview}...
 - **当前章节**：{chapter_id} {title}
 - **章节概要**：{desc}
 {rag_section}
@@ -479,7 +479,7 @@ async def generate_chapter_content_stream(
                 try:
                     extract_prompt = [
                         {"role": "system", "content": "提取1个核心业务领域关键词(如:智慧城市)，仅输出词。"},
-                        {"role": "user", "content": f"项目概述：{project_overview[:200]}"}
+                        {"role": "user", "content": f"项目概述：{project_overview}"}
                     ]
                     kw_res = await model_service.chat_completion(extract_prompt, temperature=0.1)
                     clean_kw = re.sub(r'[^\w]', '', kw_res).strip()

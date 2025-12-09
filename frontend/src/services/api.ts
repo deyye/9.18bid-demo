@@ -365,12 +365,25 @@ export async function generateContentStream(
 
                 try {
                     const data = JSON.parse(jsonStr);
-                    // 如果该章节生成成功，调用回调更新状态
-                    if (data.success && data.chapter_id && data.content) {
-                        onChapterGenerated(data.chapter_id, data.content);
-                    } else if (!data.success) {
+                    
+                    // 增强对失败和空内容的处理
+                    if (data.success && data.chapter_id) {
+                        // 成功情况：即使 content 为空字符串也回调，防止留白
+                        onChapterGenerated(data.chapter_id, data.content || '');
+                    } else if (!data.success && data.chapter_id) {
+                        // 失败情况：将错误信息作为内容回填，让用户直观看到原因
+                        const errorMsg = `<p style="color:red; font-weight:bold;">[⚠️ 生成中断] 该章节生成失败，请点击上方“AI重写本章”重试。<br/>错误原因：${data.error || '未知错误'}</p>`;
                         console.error(`章节 ${data.chapter_id} 生成失败: ${data.error}`);
+                        onChapterGenerated(data.chapter_id, errorMsg);
                     }
+                    // 🔴 删除旧的逻辑：
+                    // if (data.success && data.chapter_id && data.content) {
+                    //     onChapterGenerated(data.chapter_id, data.content);
+                    // } else if (!data.success) {
+                    //     console.error(...)
+                    // }
+                    // 🟢 修复结束
+
                 } catch (e) {
                     console.warn("解析流数据失败", e);
                 }

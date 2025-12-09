@@ -187,6 +187,7 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
 
         setIsRegenerating(true);
         // 清空当前内容，准备接收流式数据
+        let accumulatedText = '';
         setState(prev => ({
             ...prev,
             generatedContent: { ...prev.generatedContent, [selectedChapterId]: '' }
@@ -202,12 +203,16 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                 currentContent,       // 旧内容作为参考
                 state.config,
                 (chunk) => {
-                    // 流式更新内容
+                    // 1. 累积纯文本
+                    accumulatedText += chunk;
+
+                    // 2. 整体覆盖状态 (ReactQuill 会自动将纯文本转换为 HTML)
+                    // 核心修复：不再使用 prev.generatedContent + chunk，避免将 chunk 接在 HTML 标签后面导致换行
                     setState(prev => ({
                         ...prev,
                         generatedContent: { 
                             ...prev.generatedContent, 
-                            [selectedChapterId]: (prev.generatedContent[selectedChapterId] || '') + chunk 
+                            [selectedChapterId]: accumulatedText 
                         }
                     }));
                 }
