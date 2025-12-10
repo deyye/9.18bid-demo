@@ -24,13 +24,12 @@ class MarkItDownService:
     def ping(self) -> bool:
         if not self.endpoint:
             raise ValueError("文档智能端点未配置")
-        # 此处可添加轻量校验逻辑（如请求端点的健康接口）
         return True
     
 @router.post("/upload", response_model=FileUploadResponse)
 async def upload_file(file: UploadFile = File(...)):
     """上传文档并通过MarkItDownService提取文本内容"""
-    # 临时文件路径（用于MarkItDown转换，最终会自动删除）
+    # 临时文件路径
     temp_file_path = None
 
     try:

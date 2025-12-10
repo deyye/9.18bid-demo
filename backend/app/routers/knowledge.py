@@ -56,7 +56,7 @@ async def upload_knowledge(
             created_by="user_upload"
         )
 
-        # 4. 动态知识库构建 (Indexing) (步骤 2)
+        # 4. 动态知识库构建
         rag_service = get_rag_service()
         # 将文件名作为 RAG 的 source
         count = rag_service.add_document(text, source=file.filename, doc_type=doc_type)
@@ -69,7 +69,7 @@ async def upload_knowledge(
         )
 
     except HTTPException:
-        # 异常时清理文件（如果文件路径存在且未被清理）
+        # 异常时清理文件
         if temp_file_path and os.path.exists(temp_file_path): FileService._safe_file_cleanup(temp_file_path)
         raise
     except Exception as e:

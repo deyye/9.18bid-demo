@@ -1,8 +1,8 @@
 #!/bin/bash
-# 设置编码为UTF-8（Linux默认多为UTF-8，此处显式声明防兼容问题）
+# 设置编码为UTF-8（Linux默认多为UTF-8，显式声明防兼容问题）
 export LC_ALL=en_US.UTF-8
 
-# 清除终端并设置标题（兼容大部分终端）
+# 清除终端并设置标题
 clear
 echo -e "\033]0;AI写标书助手 - 单端口模式\033\\"
 
@@ -79,7 +79,7 @@ echo -e "${GREEN}✨ 前后端已集成，无CORS问题！${NC}"
 echo -e "${CYAN}================================================"${NC}
 echo -e "\n"
 
-# 进入backend目录并启动Python服务（Linux用python3，路径需适配实际环境）
+# 进入backend目录并启动Python服务
 cd backend || { echo -e "${RED}❌ 进入backend目录失败！${NC}"; exit 1; }
 
 # 检查Python环境（若用conda，需先激活环境；此处默认系统Python3，可根据实际修改）

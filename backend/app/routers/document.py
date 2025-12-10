@@ -87,8 +87,6 @@ def create_cover_page(doc, project_name="投标文件"):
 def process_html_content(doc, html_content, base_level=1):
     """
     递归解析 HTML 并写入 Word
-    ✅ 修复：处理容器内的孤立文本节点，防止内容丢失
-    ✅ 修复：强制正文使用 Normal 样式，防止沿用标题格式
     """
     if not html_content:
         return

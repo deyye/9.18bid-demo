@@ -1,7 +1,6 @@
 from sqlalchemy import Column, String, DateTime, func
 from .db_config import Base
 
-# 对应 deepseek_sql_20251114_625c41.sql 中的 t_attachment 表结构
 class Attachment(Base):
     __tablename__ = 't_attachment'
     

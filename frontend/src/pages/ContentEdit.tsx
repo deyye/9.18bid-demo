@@ -188,6 +188,10 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
         setIsRegenerating(true);
         // 清空当前内容，准备接收流式数据
         let accumulatedText = '';
+        let updateBuffer = '';  // 临时缓冲区
+        let lastUpdateTime = Date.now();
+        const BATCH_SIZE = 100;  // 每100字符更新一次
+        const TIMEOUT = 300;     // 或300ms超时更新
         setState(prev => ({
             ...prev,
             generatedContent: { ...prev.generatedContent, [selectedChapterId]: '' }
@@ -199,24 +203,42 @@ const ContentEdit: React.FC<ContentEditProps> = ({ onNext }) => {
                 chapterInfo.parents,
                 state.overview,
                 state.requirements,
-                regenPrompt,          // 用户指令
-                currentContent,       // 旧内容作为参考
+                regenPrompt,
+                currentContent,
                 state.config,
                 (chunk) => {
-                    // 1. 累积纯文本
                     accumulatedText += chunk;
-
-                    // 2. 整体覆盖状态 (ReactQuill 会自动将纯文本转换为 HTML)
-                    // 核心修复：不再使用 prev.generatedContent + chunk，避免将 chunk 接在 HTML 标签后面导致换行
-                    setState(prev => ({
-                        ...prev,
-                        generatedContent: { 
-                            ...prev.generatedContent, 
-                            [selectedChapterId]: accumulatedText 
-                        }
-                    }));
+                    updateBuffer += chunk;
+                    
+                    const now = Date.now();
+                    
+                    // 批量更新条件：达到字符数阈值 或 超时
+                    if (updateBuffer.length >= BATCH_SIZE || (now - lastUpdateTime) > TIMEOUT) {
+                        setState(prev => ({
+                            ...prev,
+                            generatedContent: { 
+                                ...prev.generatedContent, 
+                                [selectedChapterId]: accumulatedText 
+                            }
+                        }));
+                        
+                        updateBuffer = '';  // 清空缓冲
+                        lastUpdateTime = now;
+                    }
                 }
             );
+            
+            // 最终更新（处理剩余内容）
+            if (updateBuffer) {
+                setState(prev => ({
+                    ...prev,
+                    generatedContent: { 
+                        ...prev.generatedContent, 
+                        [selectedChapterId]: accumulatedText 
+                    }
+                }));
+            }
+            
             message.success("重写完成");
             setIsRegenModalOpen(false);
         } catch (error) {

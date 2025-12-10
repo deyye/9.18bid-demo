@@ -257,7 +257,7 @@ def build_bidding_user_prompt(
 现在开始撰写：
 """
 
-# 🟢 新增：重写专用的 Prompt 构建函数
+# 重写专用的 Prompt 构建函数
 def build_regeneration_user_prompt(
     project_overview: str,
     chapter_id: str,
@@ -300,22 +300,35 @@ def build_regeneration_user_prompt(
 
 
 # ==========================================
-# 🟢 核心修复：流式过滤器
+# 流式过滤器
 # ==========================================
 @dataclass
 class StreamFilter:
     """
-    用于过滤流式输出中的 <think> 标签和开场白
+    流式过滤器 - Markdown 格式感知版本
+    智能识别 Markdown 结构边界，输出美观格式
     """
     in_think_block: bool = False
     buffer: str = ""
     has_started_output: bool = False
-    is_regeneration: bool = False  # 新增：标识是否为重写模式
+    is_regeneration: bool = False
+    
+    MD_PATTERNS = {
+        'heading': r'^#+\s',           # 标题：## 、### 等
+        'list': r'^\s*[-*+]\s',        # 无序列表：- 、* 、+ 
+        'ordered_list': r'^\s*\d+\.\s', # 有序列表：1. 、2. 等
+        'bold': r'\*\*',               # 加粗：**text**
+        'table_sep': r'^\s*\|[-:]+\|', # 表格分隔符
+        'code_block': r'^```',         # 代码块
+    }
 
     def process(self, chunk: str) -> str:
-        if not chunk: return ""
+        """
+        处理流式输出，按 Markdown 语义单元输出
+        """
+        if not chunk: 
+            return ""
         
-        # 将新块加入缓冲区
         self.buffer += chunk
         output = ""
 
@@ -323,43 +336,34 @@ class StreamFilter:
         if not self.in_think_block:
             if "<think>" in self.buffer:
                 self.in_think_block = True
-                # 把 <think> 之前的内容（如果有）拿出来
                 parts = self.buffer.split("<think>", 1)
                 pre_think = parts[0]
                 output += pre_think
-                # 缓冲区保留 <think> 之后的部分
                 self.buffer = parts[1] if len(parts) > 1 else ""
         
         # 2. 处理 <think> 块的结束
         if self.in_think_block:
             if "</think>" in self.buffer:
                 self.in_think_block = False
-                # 丢弃 </think> 之前的所有内容（思考过程）
                 parts = self.buffer.split("</think>", 1)
-                # 保留 </think> 之后的内容
                 self.buffer = parts[1] if len(parts) > 1 else ""
             else:
-                # 还在思考块中，不输出任何内容
-                return output
+                return output 
 
-        # 3. 如果不在思考块中，处理开场白过滤 (仅在刚开始输出时)
+        # 3. 开场白过滤
         if not self.in_think_block and not self.has_started_output:
-            # ✅ 重写模式下跳过开场白过滤
             if self.is_regeneration:
                 self.has_started_output = True
             else:
-                # 如果缓冲区还很短，可能还没把废话吐完，先攒一攒
                 if len(self.buffer) < 30 and self.buffer.strip(): 
-                    return output  # 提前返回，等待更多内容
+                    return output
                 
-                # 常见的废话正则
                 patterns = [
                     r"^(好的|明白了|没问题|Sure|Here is).*?[\n\r]", 
                     r"^.*?(为您|如下).*?[:：][\n\r]",
                     r"^根据.*?要求"
                 ]
                 
-                # 尝试清洗
                 temp_buf = self.buffer
                 for p in patterns:
                     match = re.match(p, temp_buf, re.IGNORECASE | re.DOTALL)
@@ -370,22 +374,126 @@ class StreamFilter:
                     self.buffer = temp_buf
                     self.has_started_output = True
         
-        # 4. 输出缓冲区内容
+        # 4. 智能 Markdown 边界检测
         if not self.in_think_block:
-            # 为了防止 <think> 标签被切断（如 "<thi"），保留最后几个字符
-            safe_len = 10
-            if len(self.buffer) > safe_len: 
-                to_yield = self.buffer[:-safe_len]
-                self.buffer = self.buffer[-safe_len:]
-                output += to_yield
-                self.has_started_output = True
+            output += self._extract_complete_units()
         
         return output
 
+    def _extract_complete_units(self) -> str:
+        """
+        提取完整的 Markdown 语义单元
+        """
+        output = ""
+        lines = self.buffer.split('\n')
+        
+        # 保留最后一行（可能未完成）
+        if len(lines) > 1:
+            complete_lines = lines[:-1]
+            self.buffer = lines[-1]
+            
+            # 逐行处理
+            for line in complete_lines:
+                # 检查是否是完整的 Markdown 单元
+                if self._is_complete_markdown_line(line):
+                    output += line + '\n'
+                    self.has_started_output = True
+                else:
+                    # 未完成的行放回缓冲区
+                    self.buffer = line + '\n' + self.buffer
+                    break
+        
+        # 特殊处理：如果缓冲区积累太多（超过50000字符），强制输出
+        if len(self.buffer) > 50000:
+            # 找到最近的完整段落（双换行）
+            if '\n\n' in self.buffer:
+                parts = self.buffer.split('\n\n', 1)
+                output += parts[0] + '\n\n'
+                self.buffer = parts[1]
+            else:
+                # 找不到段落边界，至少输出到最后一个句号
+                for sep in ['。', '！', '？', '.', '!', '?']:
+                    if sep in self.buffer:
+                        idx = self.buffer.rfind(sep)
+                        output += self.buffer[:idx+1]
+                        self.buffer = self.buffer[idx+1:]
+                        break
+        
+        return output
+
+    def _is_complete_markdown_line(self, line: str) -> bool:
+        """
+        判断是否是完整的 Markdown 行
+        """
+        stripped = line.strip()
+        
+        # 空行总是完整的
+        if not stripped:
+            return True
+        
+        # 🟢 检查各种 Markdown 结构
+        
+        # 1. 标题必须完整（至少有标题文本）
+        if re.match(self.MD_PATTERNS['heading'], stripped):
+            return len(stripped) > 3  # 至少 "## X"
+        
+        # 2. 列表项必须完整（至少有内容）
+        if re.match(self.MD_PATTERNS['list'], stripped):
+            return len(stripped) > 2  # 至少 "- X"
+        
+        if re.match(self.MD_PATTERNS['ordered_list'], stripped):
+            return len(stripped) > 3  # 至少 "1. X"
+        
+        # 3. 加粗标记必须成对
+        bold_count = stripped.count('**')
+        if bold_count > 0 and bold_count % 2 != 0:
+            return False  # 未配对的 **
+        
+        # 4. 表格行必须完整
+        if '|' in stripped:
+            # 简单检查：起始和结束都有 |
+            return stripped.startswith('|') or stripped.endswith('|')
+        
+        # 5. 代码块标记
+        if stripped.startswith('```'):
+            return True  # 代码块边界总是完整的
+        
+        # 6. 普通段落：检查是否以标点结束
+        # 中文标点
+        if any(stripped.endswith(p) for p in ['。', '！', '？', '；', '：', '，']):
+            return True
+        
+        # 英文标点（但排除缩写如 Mr.）
+        if any(stripped.endswith(p) for p in ['.', '!', '?', ';', ':']):
+            # 检查是否是缩写（前面是大写字母）
+            if len(stripped) > 1 and stripped[-2].isupper():
+                return False
+            return True
+        
+        # 7. 行内代码或链接可能未完成
+        if '`' in stripped and stripped.count('`') % 2 != 0:
+            return False
+        
+        if '[' in stripped and '](' not in stripped:
+            return False  # 未完成的链接
+        
+        # 8. 默认：短行（<10字符）等待更多内容
+        if len(stripped) < 10:
+            return False
+        
+        # 其他情况视为完整
+        return True
+
     def flush(self) -> str:
-        """最后清空缓冲区"""
-        if self.in_think_block: return ""
-        return self.buffer
+        """
+        强制清空所有缓冲内容
+        """
+        if self.in_think_block: 
+            return ""
+        
+        output = self.buffer
+        self.buffer = ""
+        return output
     
 def clean_final_text(text: str) -> str:
     """清洗LLM输出文本"""
@@ -395,7 +503,7 @@ def clean_final_text(text: str) -> str:
     # 移除思考标签
     text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.DOTALL)
     
-    # 移除常见的开场白（更全面的匹配）
+    # 移除常见的开场白
     opening_patterns = [
         r"^(好的|明白了|没问题|当然可以|收到|了解|OK|Sure|Here is|Here's)[\s,，。]*",
         r"^(我将|让我|下面|接下来|现在)[\s,，。]*为您.*?[\n\r]",
@@ -447,7 +555,7 @@ async def generate_chapter_content_stream(
         rag_context_str = ""
         
         try:
-            # 3. 🟢 优化的动静结合逻辑
+            # 3. 优化的动静结合逻辑
             
             # (A) 判定是否为"业绩/经验"类章节
             trigger_words = ["业绩", "案例", "经验", "证明", "同类项目", "成功", "交付"]
@@ -526,7 +634,7 @@ async def generate_chapter_content_stream(
 
         parent_text = " > ".join([p['title'] for p in (request.parent_chapters or [])])
 
-        # 🟢 分支逻辑：重写 vs 初次生成 (✅ 修复后的版本)
+        # 分支逻辑：重写 vs 初次生成
         if regeneration_prompt:
             logger.info(f"🔄 进入重写模式，用户指令: {regeneration_prompt}")
             system_prompt = "你是一名专业的标书编辑，擅长根据用户反馈修改和润色文档。"
@@ -574,7 +682,7 @@ async def generate_chapter_content_stream(
                             full_content += filtered_chunk
                             yield f"data: {json.dumps({'status': 'streaming', 'content': filtered_chunk, 'chapter_id': request.chapter.get('id')}, ensure_ascii=False)}\n\n"
                     
-                    # 🟢 处理缓冲区剩余内容
+                    # 处理缓冲区剩余内容
                     remaining = stream_filter.flush()
                     if remaining:
                         full_content += remaining

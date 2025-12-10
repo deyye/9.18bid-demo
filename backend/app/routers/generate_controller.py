@@ -1,5 +1,3 @@
-# backend/app/routers/generate_controller.py
-
 import json
 import asyncio
 import logging
@@ -133,7 +131,7 @@ async def generate_chapter_worker(
 async def generate_full_project(
     request: ContentGenerationRequest, 
     use_qwen: bool = True,
-    max_concurrency: int = 4
+    max_concurrency: int = 2
 ):
     """
     【并发优化版】自动并行生成整本项目文档
@@ -141,7 +139,7 @@ async def generate_full_project(
     Args:
         request: 内容生成请求，包含项目概述和目录结构
         use_qwen: 是否使用Qwen模型 (默认True)
-        max_concurrency: 最大并发数 (默认4，可根据服务器性能调整)
+        max_concurrency: 最大并发数 (默认2，可根据服务器性能调整)
     
     Returns:
         SSE流式响应，实时返回各章节生成进度
@@ -318,7 +316,7 @@ async def get_generation_stats():
     # TODO: 可以接入Redis或数据库记录实际的生成历史
     return {
         "status": "ready",
-        "max_concurrency": 4,
+        "max_concurrency": 2,
         "supported_models": ["qwen", "openai"],
         "features": [
             "RAG增强检索",

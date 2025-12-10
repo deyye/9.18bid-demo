@@ -1,5 +1,4 @@
-# backend/app/routers/data_manager.py
-import datetime # 确保导入
+import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -11,12 +10,11 @@ from ..models.business_models import Company
 router = APIRouter(prefix="/api/data", tags=["结构化数据管理"])
 
 # 动态创建 Pydantic 模型用于输入校验 (以 Company 为例)
-# 简化：直接使用 Dict[str, Any] 作为输入，让 Service 层处理
+# 直接使用 Dict[str, Any] 作为输入，让 Service 层处理
 class CompanyCreateUpdate(BaseModel):
     company_name: str
     parent_id: Optional[str] = None
     address: Optional[str] = None
-    # ... 其他字段
 
 # --- 通用表结构查询 ---
 @router.get("/tables")

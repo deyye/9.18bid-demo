@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.getcwd(), "data", "chroma_db")
 
-# 更改为本地模型路径
+# 本地模型路径
 LOCAL_MODEL_PATH = "/home/star/81/8.11rag_kefu/embedding" 
 EMBEDDING_MODEL_NAME = LOCAL_MODEL_PATH 
 
@@ -47,14 +47,12 @@ class RagService:
     def search(self, query: str, n_results: int = 3) -> List[str]:
         if self.collection.count() == 0: return []
         
-        # 修正：确保在查询时只返回 documents
         results = self.collection.query(
             query_texts=[query], 
             n_results=n_results,
             include=["documents", "metadatas"] # 需要包含 metadatas 才能在 routers/content.py 中格式化
         )
         
-        # 修正：返回结构化数据，包含来源和内容，以便 content.py 中使用
         if results and results.get('documents'):
             retrieved_data = []
             for i in range(len(results['documents'][0])):
@@ -79,7 +77,6 @@ class RagService:
              self.collection = self.client.get_or_create_collection(name="bid_knowledge_base")
 
 
-    # 修正 list_documents 接口，确保返回与前端预期一致
     def list_documents(self, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
         count = self.collection.count()
         if count == 0:
@@ -122,7 +119,7 @@ class RagService:
             results = self.collection.query(
                 query_texts=[query], 
                 n_results=n_results,
-                where=filter, # ✅ 传入过滤条件
+                where=filter, # 传入过滤条件
                 include=["documents", "metadatas"]
             )
             
